@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>AXIOM</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="panel">
+
+    <!-- Title bar (draggable) -->
+    <div id="titlebar">
+      <div id="logo">
+        <span class="logo-bracket">[</span>
+        <span class="logo-text">AXIOM</span>
+        <span class="logo-bracket">]</span>
+      </div>
+      <button id="close-btn" title="Hide">&times;</button>
+    </div>
+
+    <!-- Waveform visualizer -->
+    <div id="waveform">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+
+    <!-- Conversation log -->
+    <div id="conversation">
+      <div id="messages">
+        <div class="msg system">Press <kbd>Alt+Space</kbd> or tap the mic to begin.</div>
+      </div>
+    </div>
+
+    <!-- Mic button -->
+    <div id="mic-area">
+      <button id="mic-btn">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="1" width="6" height="12" rx="3"></rect>
+          <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">
+      <span id="status-dot"></span>
+      <span id="status-text">Ready</span>
+    </div>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

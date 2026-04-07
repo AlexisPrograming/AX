@@ -1,0 +1,7 @@
+{
+  "hotkey": "Alt+Space",
+  "voice": "en-US-GuyNeural",
+  "model": "claude-sonnet-4-20250514",
+  "maxTokens": 300,
+  "theme": "dark"
+}
