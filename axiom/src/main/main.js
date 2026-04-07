@@ -8,6 +8,7 @@ const wakeword        = require('../services/wakeword.js');
 const proactive       = require('../services/proactive.js');
 const pomodoro        = require('../services/pomodoro.js');
 const terminalWatcher = require('../services/terminal-watcher.js');
+const clipboardService = require('../services/clipboard.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -29,6 +30,7 @@ function getOpenAI() {
 
 let mainWindow = null;
 let tray = null;
+let lastAxiomResponse = null;
 
 const launchedAtLogin = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
 
@@ -366,6 +368,77 @@ app.on('window-all-closed', (e) => {
   e.preventDefault();
 });
 
+// ── Clipboard intent handler ──────────────────────────────────
+// Returns a reply string if the message is a clipboard command, or null to fall through.
+async function handleClipboardIntent(message) {
+  const { needsClipboard, sendMessageWithClipboard } = require('../services/brain.js');
+  const intent = needsClipboard(message);
+  if (!intent) return null;
+
+  if (intent === 'copy_that') {
+    if (!lastAxiomResponse) return "I don't have anything to copy yet. Ask me something first.";
+    clipboardService.write(lastAxiomResponse);
+    const reply = "Copied to your clipboard.";
+    lastAxiomResponse = reply;
+    return reply;
+  }
+
+  if (intent === 'save_that') {
+    if (!lastAxiomResponse) return "Nothing to save yet. Ask me something first.";
+    try {
+      const filePath = clipboardService.saveToFile(lastAxiomResponse);
+      const reply = `Saved to your Documents AXIOM folder as ${path.basename(filePath)}.`;
+      lastAxiomResponse = reply;
+      return reply;
+    } catch (err) {
+      return `Hmm, couldn't save the file. ${err.message}`;
+    }
+  }
+
+  if (intent === 'previous') {
+    const prev = clipboardService.getPrevious();
+    if (!prev) {
+      const reply = "I only have one clipboard entry so far. Copy something else and try again.";
+      lastAxiomResponse = reply;
+      return reply;
+    }
+    const preview = prev.length > 120 ? `${prev.slice(0, 120)}...` : prev;
+    const reply = `The last thing you copied before that was: ${preview}`;
+    lastAxiomResponse = reply;
+    return reply;
+  }
+
+  if (intent === 'read_aloud') {
+    const clipText = clipboardService.read();
+    if (!clipText || !clipText.trim()) return "Your clipboard is empty right now.";
+    lastAxiomResponse = clipText;
+    if (clipText.length > 600) {
+      return `${clipText.slice(0, 600)}... That's the first part. Say "AX save that" to save the full text to a file.`;
+    }
+    return clipText;
+  }
+
+  // For explain / explain_detail / translate / summarize / fix / improve
+  const clipText = clipboardService.read();
+  if (!clipText || !clipText.trim()) {
+    return "Your clipboard seems to be empty. Copy some text first, then ask me again.";
+  }
+
+  const result = await sendMessageWithClipboard(message, clipText, intent);
+  let speech = result.speech;
+
+  // Long response: truncate spoken reply, store full text for "save that"
+  if (speech.length > 450) {
+    lastAxiomResponse = speech;
+    const words = speech.split(/\s+/);
+    speech = `${words.slice(0, 65).join(' ')}... That's the short version. Say "AX save that" to get the full answer saved to a file.`;
+  } else {
+    lastAxiomResponse = speech;
+  }
+
+  return speech;
+}
+
 // ── IPC handlers ─────────────────────────────────────────────
 
 ipcMain.handle('send-to-claude', async (_event, message) => {
@@ -374,6 +447,11 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
   const { speak } = require('../services/speaker.js');
 
   proactive.recordInteraction();
+
+  // ── Clipboard intent check ────────────────────────────────
+  const clipboardReply = await handleClipboardIntent(message);
+  if (clipboardReply !== null) return clipboardReply;
+
   const result = await sendMessage(message);
 
   if (result.action) {
@@ -383,6 +461,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('brainstorm-start', mode);
       }
+      lastAxiomResponse = result.speech;
       return result.speech; // "Go for it. I'm listening..."
     }
 
@@ -393,6 +472,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       try {
         const raw = await search(result.action.query, result.action.hint || 'general');
         const summary = await summarizeSearchResults(result.action.query, raw);
+        lastAxiomResponse = summary;
         return summary;
       } catch (err) {
         console.error('[AXIOM search]', err.message);
@@ -404,6 +484,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
     console.log('[AXIOM action]', result.action.type, actionResult);
   }
 
+  lastAxiomResponse = result.speech;
   return result.speech;
 });
 
@@ -444,6 +525,11 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
   const { executeAction } = require('../services/pc-control.js');
 
   proactive.recordInteraction();
+
+  // Clipboard intents take priority — e.g. "read this to me" may arrive here
+  const clipboardReply = await handleClipboardIntent(text);
+  if (clipboardReply !== null) return clipboardReply;
+
   let b64 = base64;
   try {
     if (!b64) b64 = await captureScreenshot();
@@ -452,8 +538,8 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
     if (result.action) {
       const actionResult = await executeAction(result.action);
       console.log('[AXIOM action]', result.action.type, actionResult);
-
     }
+    lastAxiomResponse = result.speech;
     return result.speech;
   } finally {
     // Nothing is persisted — the base64 lives in memory only and is

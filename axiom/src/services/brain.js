@@ -540,6 +540,69 @@ function parseResponse(reply) {
   return { speech: reply, action: null };
 }
 
+// ── Clipboard intent detection ──────────────────────────────
+const CLIPBOARD_INTENT_PATTERNS = {
+  explain:        [/\bwhat is this\b/i, /\bwhat'?s this\b/i, /\bwhat does this (mean|do)\b/i],
+  explain_detail: [/\bexplain this\b/i, /\btell me (more )?about this\b/i, /\bbreak this down\b/i],
+  translate:      [/\btranslate this\b/i],
+  summarize:      [/\bsummarize this\b/i, /\bgive me (a )?summary\b/i, /\btl;?dr\b/i],
+  fix:            [/\bfix this\b/i, /\bdebug this\b/i, /\bfix (the )?error(s)?\b/i],
+  improve:        [/\bimprove this\b/i, /\brewrite this\b/i, /\bmake this better\b/i, /\bclean this up\b/i],
+  read_aloud:     [/\bread this (to me|out( loud)?)\b/i, /\bread (it|clipboard) (to me|out( loud)?)\b/i],
+  copy_that:      [/\bcopy that\b/i, /\bcopy (your |my )?(last |previous )?response\b/i],
+  save_that:      [/\bsave that\b/i, /\bsave (your |it |this )?(to (a )?file|to disk)\b/i],
+  previous:       [/\bwhat did i copy (before|last|previously)\b/i, /\bprevious clipboard\b/i, /\blast (thing i )?(copied|clipboard)\b/i, /\bclipboard history\b/i],
+};
+
+const CLIPBOARD_INSTRUCTIONS = {
+  explain:        'Explain what this is in plain, conversational terms — like you\'re telling a friend what they just copied. Keep it concise and spoken-friendly.',
+  explain_detail: 'Give a detailed explanation of this content. Break it down clearly so someone unfamiliar with it can understand. Spoken-friendly, no markdown.',
+  translate:      'Translate this text to English. If it\'s already English, confirm it and give a quick one-line summary of what it says.',
+  summarize:      'Summarize this content concisely. Pull out the key points only. Keep it short and spoken-friendly.',
+  fix:            'This appears to be code or text with potential errors. Identify the issues and explain the fix in plain terms. Then give the corrected version.',
+  improve:        'Rewrite or improve this content. Make it clearer, more effective, or more professional while keeping the original intent.',
+};
+
+function needsClipboard(text) {
+  if (!text) return null;
+  for (const [intent, patterns] of Object.entries(CLIPBOARD_INTENT_PATTERNS)) {
+    if (patterns.some((re) => re.test(text))) return intent;
+  }
+  return null;
+}
+
+async function sendMessageWithClipboard(userMessage, clipboardText, intent) {
+  const instruction = CLIPBOARD_INSTRUCTIONS[intent] || 'Help with this clipboard content.';
+  const text = (userMessage || '').trim();
+
+  const messages = getMessages();
+  const contextTag = buildContextTag(text);
+
+  const userContent = `${contextTag}\n[CLIPBOARD CONTENT]\n---\n${clipboardText}\n---\n\nUser said: "${text}"\nTask: ${instruction}`;
+  messages.push({ role: 'user', content: userContent });
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 800,
+    system: buildSystemPrompt(),
+    messages,
+  });
+
+  const reply = response.content[0].text;
+
+  // Replace bulky clipboard message in history with a text summary
+  messages[messages.length - 1] = { role: 'user', content: `[clipboard:${intent}] ${text}` };
+  messages.push({ role: 'assistant', content: reply });
+
+  if (messages.length > 40) messages.splice(0, 2);
+
+  const parsed = parseResponse(reply);
+  memory.recordInteraction();
+  memory.recordActivity(text);
+  memory.addExchange(`[clipboard:${intent}] ${text}`, parsed.speech);
+  return parsed;
+}
+
 // ── Screen-vision intent detection ──────────────────────────
 const SCREEN_INTENT_PATTERNS = [
   /\bwhat'?s on (my|the) screen\b/i,
@@ -780,4 +843,4 @@ async function summarizeSearchResults(query, resultsText) {
   }
 }
 
-module.exports = { sendMessage, sendMessageWithImage, needsScreen, clearHistory, generateBriefing, generateProactive, summarizeSearchResults, explainError };
+module.exports = { sendMessage, sendMessageWithImage, sendMessageWithClipboard, needsScreen, needsClipboard, clearHistory, generateBriefing, generateProactive, summarizeSearchResults, explainError };
