@@ -328,3 +328,21 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+/* Recording indicator */
+#rec-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+  margin-right: 8px;
+  vertical-align: middle;
+  transition: background 0.15s;
+}
+#rec-dot.recording {
+  background: #ff2d2d;
+  box-shadow: 0 0 8px #ff2d2d;
+  animation: rec-pulse 1s infinite;
+}
+@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }

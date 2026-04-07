@@ -7,7 +7,12 @@
       "Bash(node -e \"const m = require\\('msedge-tts'\\); console.log\\(Object.keys\\(m\\)\\); console.log\\(typeof m.MsEdgeTTS\\); console.log\\(typeof m.OUTPUT_FORMAT\\);\")",
       "Bash(powershell:*)",
       "Bash(node -e \"const { MsEdgeTTS, OUTPUT_FORMAT } = require\\('msedge-tts'\\); const t = new MsEdgeTTS\\(\\); t.setMetadata\\('en-US-GuyNeural', OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3\\).then\\(\\(\\) => t.toFile\\(require\\('os'\\).tmpdir\\(\\), 'hello test'\\)\\).then\\(r => { console.log\\('TYPE:', typeof r\\); console.log\\('VALUE:', JSON.stringify\\(r, null, 2\\)\\); console.log\\('KEYS:', r && typeof r === 'object' ? Object.keys\\(r\\) : 'n/a'\\); }\\).catch\\(e => console.log\\('ERR:', e.message\\)\\)\")",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(printf:*)",
+      "Bash(node -c src/main/main.js)",
+      "Bash(node -c src/main/preload.js)",
+      "Bash(node -c src/renderer/app.js)"
     ]
   },
   "enableAllProjectMcpServers": true,

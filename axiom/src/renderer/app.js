@@ -4,9 +4,107 @@ const statusBar = document.getElementById('statusbar');
 const statusText = document.getElementById('status-text');
 const micBtn = document.getElementById('mic-btn');
 const closeBtn = document.getElementById('close-btn');
+const recDot = document.getElementById('rec-dot');
 
 let busy = false;
 let cancelled = false;
+
+// ── Whisper recording state ──────────────────────────────
+let mediaRecorder = null;
+let mediaStream = null;
+let audioCtx = null;
+let analyser = null;
+let sourceNode = null;
+let rafId = null;
+let audioChunks = [];
+
+const SILENCE_MS = 1500;
+const SILENCE_THRESHOLD = 0.012;
+const MIN_SPEECH_MS = 400;
+
+function stopRecorder() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  try { sourceNode && sourceNode.disconnect(); } catch {}
+  try { analyser && analyser.disconnect(); } catch {}
+  try { audioCtx && audioCtx.close(); } catch {}
+  audioCtx = analyser = sourceNode = null;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch {}
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+}
+
+function recordUntilSilence() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      return reject(err);
+    }
+
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(audioChunks, { type: mime });
+      const buf = await blob.arrayBuffer();
+      resolve(buf);
+    };
+
+    mediaRecorder.onerror = (e) => reject(e.error || new Error('recorder error'));
+    mediaRecorder.start(250);
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    sourceNode.connect(analyser);
+
+    const data = new Float32Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let lastVoiceAt = performance.now();
+    let everSpoke = false;
+
+    const tick = () => {
+      if (cancelled) {
+        stopRecorder();
+        return;
+      }
+      analyser.getFloatTimeDomainData(data);
+      let sumSq = 0;
+      for (let i = 0; i < data.length; i++) sumSq += data[i] * data[i];
+      const rms = Math.sqrt(sumSq / data.length);
+
+      if (rms > SILENCE_THRESHOLD) {
+        lastVoiceAt = performance.now();
+        if (performance.now() - startedAt > MIN_SPEECH_MS) everSpoke = true;
+      }
+
+      const silentFor = performance.now() - lastVoiceAt;
+      const totalFor = performance.now() - startedAt;
+
+      // Hard cap at 30s; or stop after silence (only if we heard speech, or after 6s of nothing)
+      if (totalFor > 30000 || (silentFor > SILENCE_MS && (everSpoke || totalFor > 6000))) {
+        stopRecorder();
+        return;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  });
+}
 
 const MIC_ICON = `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="9" y="1" width="6" height="12" rx="3"></rect>
@@ -26,6 +124,7 @@ function setState(state) {
   waveformEl.className = '';
   statusBar.className = '';
   micBtn.classList.remove('listening', 'cancel');
+  if (recDot) recDot.classList.toggle('recording', state === 'listening');
 
   switch (state) {
     case 'listening':
@@ -87,7 +186,7 @@ function addMessage(role, text) {
 function cancelAll() {
   cancelled = true;
   window.axiom.stopSpeaking();
-  window.axiom.stopListening();
+  stopRecorder();
   busy = false;
   setState('ready');
 }
@@ -101,11 +200,16 @@ async function listen() {
   setState('listening');
 
   try {
-    const result = await window.axiom.startListening();
+    const audioBuffer = await recordUntilSilence();
 
     if (cancelled) return;
 
-    if (result.error === 'no-speech' || result.error === 'timeout') {
+    setState('thinking');
+    const result = await window.axiom.transcribeAudio(audioBuffer);
+
+    if (cancelled) return;
+
+    if (result.error === 'no-speech') {
       addMessage('system', 'No speech detected. Tap the mic to try again.');
       setState('ready');
       busy = false;
@@ -113,7 +217,7 @@ async function listen() {
     }
 
     if (result.error) {
-      addMessage('system', `Speech error: ${result.error}`);
+      addMessage('system', `Whisper error: ${result.error}`);
       setState('error');
       setTimeout(() => setState('ready'), 3000);
       busy = false;

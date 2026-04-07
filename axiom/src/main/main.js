@@ -1,6 +1,8 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, Notification, session } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
+const OpenAI = require('openai');
+const { toFile } = require('openai/uploads');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -8,6 +10,17 @@ const dotenvPath = app.isPackaged
 require('dotenv').config({ path: dotenvPath });
 
 const store = new Store({ defaults: { autoLaunch: true, firstRun: true } });
+
+let openaiClient = null;
+function getOpenAI() {
+  if (!openaiClient) {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is missing from .env');
+    }
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openaiClient;
+}
 
 let mainWindow = null;
 let tray = null;
@@ -117,6 +130,12 @@ function showFirstRunNotification() {
 // ── App lifecycle ────────────────────────────────────────────
 
 app.whenReady().then(() => {
+  // Auto-grant microphone permission for the renderer
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    if (permission === 'media' || permission === 'microphone') return callback(true);
+    callback(false);
+  });
+
   createWindow();
   createTray();
   applyAutoLaunch(store.get('autoLaunch'));
@@ -171,14 +190,26 @@ ipcMain.handle('stop-speaking', async () => {
   stop();
 });
 
-ipcMain.handle('start-listening', async () => {
-  const { recognize } = require('../services/speech.js');
-  return recognize();
-});
+ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
+  try {
+    if (!arrayBuffer || arrayBuffer.byteLength < 1000) {
+      return { error: 'no-speech' };
+    }
+    const buffer = Buffer.from(arrayBuffer);
+    const file = await toFile(buffer, 'audio.webm', { type: 'audio/webm' });
 
-ipcMain.handle('stop-listening', async () => {
-  const { stopListening } = require('../services/speech.js');
-  stopListening();
+    const result = await getOpenAI().audio.transcriptions.create({
+      file,
+      model: 'whisper-1',
+    });
+
+    const text = (result.text || '').trim();
+    if (!text) return { error: 'no-speech' };
+    return { text };
+  } catch (err) {
+    console.error('[whisper] error:', err);
+    return { error: err.message || 'whisper-failed' };
+  }
 });
 
 ipcMain.on('window-minimize', () => {
