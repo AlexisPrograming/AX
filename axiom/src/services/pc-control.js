@@ -5,6 +5,7 @@ const routines = require('./routines.js');
 // Known app shortcuts → actual commands
 const APP_MAP = {
   'vscode':    'code',
+  'claude':    'start claude',
   'vs code':   'code',
   'chrome':    'start chrome',
   'browser':   'start chrome',
@@ -37,6 +38,9 @@ async function executeAction(action) {
   switch (action.type) {
     case 'open_app':
       return openApp(action.app);
+
+    case 'close_app':
+      return closeApp(action.app);
 
     case 'search_web':
       return searchWeb(action.query);
@@ -85,9 +89,55 @@ async function executeAction(action) {
       // Handled by brain.js — no PC action needed
       return { success: true, output: 'Memory updated' };
 
+    case 'spotify_play':
+      return require('./spotify.js').play();
+    case 'spotify_pause':
+      return require('./spotify.js').pause();
+    case 'spotify_next':
+      return require('./spotify.js').next();
+    case 'spotify_previous':
+      return require('./spotify.js').previous();
+    case 'spotify_current':
+      // Handled by brain.js — nothing to do here
+      return { success: true };
+
     default:
       return { success: false, error: `Unknown action type: ${action.type}` };
   }
+}
+
+// App name → process name(s) for taskkill
+const CLOSE_MAP = {
+  'chrome':       'chrome.exe',
+  'claude':       'Claude.exe',
+  'browser':      'chrome.exe',
+  'firefox':      'firefox.exe',
+  'edge':         'msedge.exe',
+  'spotify':      'Spotify.exe',
+  'discord':      'Discord.exe',
+  'slack':        'slack.exe',
+  'teams':        'Teams.exe',
+  'vscode':       'Code.exe',
+  'vs code':      'Code.exe',
+  'notepad':      'notepad.exe',
+  'calculator':   'CalculatorApp.exe',
+  'calc':         'CalculatorApp.exe',
+  'terminal':     'WindowsTerminal.exe',
+  'explorer':     'explorer.exe',
+  'files':        'explorer.exe',
+  'word':         'WINWORD.EXE',
+  'excel':        'EXCEL.EXE',
+  'paint':        'mspaint.exe',
+  'task manager': 'Taskmgr.exe',
+  'powershell':   'powershell.exe',
+  'cmd':          'cmd.exe',
+};
+
+function closeApp(appName) {
+  if (!appName) return Promise.resolve({ success: false, error: 'No app specified' });
+  const key = appName.toLowerCase().trim();
+  const proc = CLOSE_MAP[key] || `${appName}.exe`;
+  return run(`taskkill /IM "${proc}" /F`);
 }
 
 function openApp(appName) {

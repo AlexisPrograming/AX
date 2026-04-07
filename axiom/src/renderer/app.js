@@ -42,6 +42,11 @@ const SILENCE_MS = 1500;
 const SILENCE_THRESHOLD = 0.012;
 const MIN_SPEECH_MS = 400;
 
+// Brainstorm mode constants
+const BS_SILENCE_MS  = 5000;   // 5s silence ends brainstorm
+const BS_MAX_MS      = 180000; // 3 minute hard cap
+const BS_MIN_MS      = 1000;
+
 function stopRecorder() {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
@@ -124,6 +129,107 @@ function recordUntilSilence() {
     };
     rafId = requestAnimationFrame(tick);
   });
+}
+
+// Extended recorder for brainstorm mode (longer silence + max duration)
+function recordBrainstormAudio() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) { return reject(err); }
+
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
+
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
+    mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(audioChunks, { type: mime });
+      resolve(await blob.arrayBuffer());
+    };
+    mediaRecorder.onerror = (e) => reject(e.error || new Error('recorder error'));
+    mediaRecorder.start(250);
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    sourceNode.connect(analyser);
+
+    const data = new Float32Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let lastVoiceAt = performance.now();
+    let everSpoke = false;
+
+    const tick = () => {
+      if (cancelled) { stopRecorder(); return; }
+      analyser.getFloatTimeDomainData(data);
+      let sumSq = 0;
+      for (let i = 0; i < data.length; i++) sumSq += data[i] * data[i];
+      const rms = Math.sqrt(sumSq / data.length);
+
+      if (rms > SILENCE_THRESHOLD) {
+        lastVoiceAt = performance.now();
+        if (performance.now() - startedAt > BS_MIN_MS) everSpoke = true;
+      }
+
+      const silentFor = performance.now() - lastVoiceAt;
+      const totalFor  = performance.now() - startedAt;
+
+      if (totalFor > BS_MAX_MS || (silentFor > BS_SILENCE_MS && (everSpoke || totalFor > 10000))) {
+        stopRecorder(); return;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  });
+}
+
+// ── Brainstorm listen pipeline ───────────────────────────────
+
+let brainstormMode = null;
+
+async function listenBrainstorm(mode) {
+  if (busy) return;
+  busy = true;
+  cancelled = false;
+  brainstormMode = mode || 'general';
+
+  // Override status text for brainstorm
+  waveformEl.className = '';
+  statusBar.className = 'listening';
+  waveformEl.classList.add('waveform-active');
+  micBtn.classList.add('listening', 'cancel');
+  micBtn.innerHTML = STOP_ICON;
+  statusText.textContent = 'Brainstorm — speak freely, 5s silence to finish';
+  if (recDot) recDot.classList.add('recording');
+
+  try {
+    const audioBuffer = await recordBrainstormAudio();
+    if (cancelled) return;
+
+    setState('thinking');
+    statusText.textContent = 'Organizing your thoughts...';
+
+    const result = await window.axiom.processBrainstorm(audioBuffer, brainstormMode);
+    if (cancelled) return;
+
+    addMessage('assistant', result);
+    setState('speaking');
+    await window.axiom.speakText(result);
+
+    if (cancelled) return;
+    setState('ready');
+  } catch (err) {
+    if (cancelled) return;
+    addMessage('system', err.message || 'Brainstorm failed.');
+    setState('error');
+    setTimeout(() => setState('ready'), 3000);
+  }
+
+  busy = false;
+  brainstormMode = null;
 }
 
 const MIC_ICON = `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -326,6 +432,13 @@ if (window.axiom.onScreenHotkey) {
     pendingScreenshot = base64 || null;
     addMessage('system', 'Screenshot captured. Ask me about it.');
     if (!busy) listen();
+  });
+}
+
+// Brainstorm mode — extended listening triggered by brain.js action
+if (window.axiom.onBrainstormStart) {
+  window.axiom.onBrainstormStart((mode) => {
+    if (!busy) listenBrainstorm(mode);
   });
 }
 

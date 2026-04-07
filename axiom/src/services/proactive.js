@@ -39,6 +39,12 @@ function canFire(kind) {
   if (!running) return false;
   if (isQuietMode()) return false;
   if (inQuietHours()) return false;
+  // Don't interrupt during active focus sessions
+  try {
+    const pomodoro = require('./pomodoro.js');
+    if (pomodoro.isFocusing()) return false;
+  } catch {}
+
 
   const s = memory.getSession();
   const now = Date.now();

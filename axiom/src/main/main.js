@@ -4,8 +4,10 @@ const { exec } = require('child_process');
 const Store = require('electron-store');
 const OpenAI = require('openai');
 const { toFile } = require('openai/uploads');
-const wakeword = require('../services/wakeword.js');
-const proactive = require('../services/proactive.js');
+const wakeword        = require('../services/wakeword.js');
+const proactive       = require('../services/proactive.js');
+const pomodoro        = require('../services/pomodoro.js');
+const terminalWatcher = require('../services/terminal-watcher.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -78,11 +80,23 @@ function createTray() {
   tray.on('click', () => toggleWindow());
 }
 
-function buildTrayMenu() {
+function buildTrayMenu(focusLabel) {
   const autoLaunch = store.get('autoLaunch');
+  const template = [{ label: 'Show AXIOM', click: () => showWindow() }];
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show AXIOM', click: () => showWindow() },
+  if (focusLabel) {
+    template.push({ type: 'separator' });
+    template.push({ label: `⏱ ${focusLabel}`, enabled: false });
+    template.push({
+      label: 'Stop Focus Mode',
+      click: () => {
+        pomodoro.stop();
+        buildTrayMenu(null);
+      },
+    });
+  }
+
+  template.push(
     { type: 'separator' },
     {
       label: 'Start with Windows',
@@ -94,10 +108,10 @@ function buildTrayMenu() {
       },
     },
     { type: 'separator' },
-    { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
-  ]);
+    { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
+  );
 
-  tray.setContextMenu(contextMenu);
+  tray.setContextMenu(Menu.buildFromTemplate(template));
 }
 
 // ── Window positioning ───────────────────────────────────────
@@ -142,6 +156,54 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   applyAutoLaunch(store.get('autoLaunch'));
+
+  // Terminal watcher — init with error callback
+  terminalWatcher.init({
+    onError: async (errorText) => {
+      const { explainError } = require('../services/brain.js');
+      const { speak } = require('../services/speaker.js');
+      try {
+        const explanation = await explainError(errorText);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('axiom-proactive', `Error detected: ${explanation}`);
+        }
+        await speak(`Hey, got an error. ${explanation}`);
+      } catch (err) {
+        console.error('[AXIOM terminal watcher] error handler failed:', err.message);
+      }
+    },
+  });
+
+  // Terminal watcher — init with error callback
+  terminalWatcher.init({
+    onError: async (errorText) => {
+      const { explainError } = require('../services/brain.js');
+      const { speak } = require('../services/speaker.js');
+      try {
+        const explanation = await explainError(errorText);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('axiom-proactive', `Error detected: ${explanation}`);
+        }
+        await speak(`Hey, got an error. ${explanation}`);
+      } catch (err) {
+        console.error('[AXIOM terminal watcher] error handler failed:', err.message);
+      }
+    },
+  });
+
+  // Pomodoro — init with speak + tray tooltip updater
+  pomodoro.init({
+    speak: (text) => {
+      const { speak } = require('../services/speaker.js');
+      return speak(text);
+    },
+    onTrayUpdate: (label) => {
+      if (!tray || tray.isDestroyed()) return;
+      tray.setToolTip(label ? `AXIOM — ${label}` : 'AXIOM — Voice Assistant');
+      buildTrayMenu(label);
+    },
+  });
+
 
   globalShortcut.register('Alt+Space', () => {
     toggleWindow();
@@ -296,6 +358,8 @@ app.on('will-quit', async () => {
   } catch {}
   await wakeword.stop();
   proactive.stop();
+  pomodoro.shutdown();
+  terminalWatcher.shutdown();
 });
 
 app.on('window-all-closed', (e) => {
@@ -305,13 +369,37 @@ app.on('window-all-closed', (e) => {
 // ── IPC handlers ─────────────────────────────────────────────
 
 ipcMain.handle('send-to-claude', async (_event, message) => {
-  const { sendMessage } = require('../services/brain.js');
+  const { sendMessage, summarizeSearchResults } = require('../services/brain.js');
   const { executeAction } = require('../services/pc-control.js');
+  const { speak } = require('../services/speaker.js');
 
   proactive.recordInteraction();
   const result = await sendMessage(message);
 
   if (result.action) {
+    // Brainstorm: tell renderer to enter extended recording mode
+    if (result.action.type === 'brainstorm_start') {
+      const mode = result.action.mode || 'general';
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('brainstorm-start', mode);
+      }
+      return result.speech; // "Go for it. I'm listening..."
+    }
+
+    // Web search: speak the placeholder first, then fetch + summarize
+    if (result.action.type === 'web_search') {
+      const { search } = require('../services/search.js');
+      await speak(result.speech || 'Let me look that up.');
+      try {
+        const raw = await search(result.action.query, result.action.hint || 'general');
+        const summary = await summarizeSearchResults(result.action.query, raw);
+        return summary;
+      } catch (err) {
+        console.error('[AXIOM search]', err.message);
+        return "Hmm, I ran into an issue with the search. Check your Serper API key in .env.";
+      }
+    }
+
     const actionResult = await executeAction(result.action);
     console.log('[AXIOM action]', result.action.type, actionResult);
   }
@@ -364,6 +452,7 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
     if (result.action) {
       const actionResult = await executeAction(result.action);
       console.log('[AXIOM action]', result.action.type, actionResult);
+
     }
     return result.speech;
   } finally {
@@ -392,6 +481,31 @@ ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
   } catch (err) {
     console.error('[whisper] error:', err);
     return { error: err.message || 'whisper-failed' };
+  }
+});
+
+ipcMain.handle('process-brainstorm', async (_event, { arrayBuffer, mode }) => {
+  const { transcribeAudio } = ipcMain; // reuse transcription via direct call
+  const OpenAI = require('openai');
+  const { toFile } = require('openai/uploads');
+  const { processThoughts } = require('../services/brainstorm.js');
+
+  try {
+    if (!arrayBuffer || arrayBuffer.byteLength < 1000) {
+      return "Hmm, I didn't catch anything. Want to try again?";
+    }
+
+    const buffer = Buffer.from(arrayBuffer);
+    const file   = await toFile(buffer, 'audio.webm', { type: 'audio/webm' });
+    const result = await getOpenAI().audio.transcriptions.create({ file, model: 'whisper-1' });
+    const text   = (result.text || '').trim();
+
+    if (!text) return "I didn't catch what you said. Try again?";
+
+    return await processThoughts(text, mode || 'general');
+  } catch (err) {
+    console.error('[AXIOM brainstorm IPC]', err.message);
+    return "Something went wrong processing your thoughts. Sorry about that.";
   }
 });
 

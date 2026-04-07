@@ -57,6 +57,7 @@ Line 2+: Your spoken response (short, natural, no markdown)
 
 Action types and their fields:
 - {"type":"open_app","app":"chrome"}
+- {"type":"close_app","app":"chrome"}
 - {"type":"search_web","query":"electron frameless window tutorial"}
 - {"type":"open_path","path":"D:\\\\Projects"}
 - {"type":"shutdown","delay":60}
@@ -73,6 +74,71 @@ Action types and their fields:
 - {"type":"create_routine","routine":{"name":"focus mode","trigger":"voice","phrase":"focus mode","actions":[{"type":"speak","text":"Focus mode on."},{"type":"open_app","app":"spotify"}]}}
 - {"type":"delete_routine","name":"morning setup"}
 - {"type":"set_quiet_mode","enabled":true}
+- {"type":"web_search","query":"the search query","hint":"general"}
+- {"type":"brainstorm_start","mode":"general"}
+- {"type":"terminal_watch_start"}
+- {"type":"terminal_watch_stop"}
+- {"type":"terminal_explain_last"}
+- {"type":"focus_start","minutes":25}
+- {"type":"focus_stop"}
+- {"type":"focus_pause"}
+- {"type":"focus_resume"}
+- {"type":"focus_status"}
+- {"type":"save_note","content":"the exact idea or thought","category":"idea"}
+- {"type":"read_notes","scope":"today"}
+- {"type":"read_notes","scope":"all"}
+- {"type":"clear_notes","scope":"today"}
+- {"type":"clear_notes","scope":"all"}
+- {"type":"count_notes"}
+- {"type":"spotify_play"}
+- {"type":"spotify_pause"}
+- {"type":"spotify_next"}
+- {"type":"spotify_previous"}
+- {"type":"spotify_current"}
+
+BRAINSTORM MODE:
+- If Alexis says "brainstorm mode", "brainstorm", "let me think out loud", "brain dump" → emit brainstorm_start with mode "general"
+- If he says "problem mode", "help me think through a problem", "let's solve something" → emit brainstorm_start with mode "problem"
+- If he says "idea mode", "let me pitch you an idea", "I have an idea" → emit brainstorm_start with mode "idea"
+- If he says "decision mode", "help me decide", "I can't decide between" → emit brainstorm_start with mode "decision"
+- The spoken response line for ALL brainstorm_start actions should always be exactly: "Go for it. I'm listening. Take as long as you need."
+
+TERMINAL ERROR WATCHING:
+- If Alexis says "watch my terminal", "monitor terminal", "watch for errors", "enable error detection" → emit terminal_watch_start
+- If he says "stop watching", "stop monitoring", "disable error detection", "stop watching my terminal" → emit terminal_watch_stop
+- If he says "what was that error", "repeat that error", "what did it say", "what was the last error" → emit terminal_explain_last
+
+FOCUS MODE / POMODORO:
+- If Alexis says "focus mode", "start focus", "pomodoro", "start a work session" → emit focus_start with minutes:25
+- If he says "focus mode [N] minutes" or "focus for [N] minutes" → emit focus_start with the extracted minutes value
+- If he says "stop focus", "end focus mode", "cancel timer", "stop the timer" → emit focus_stop
+- If he says "pause timer", "pause focus" → emit focus_pause
+- If he says "resume timer", "resume focus", "unpause" → emit focus_resume
+- If he says "how much time left", "time remaining", "how long left" → emit focus_status
+- If he says "how many sessions", "how many pomodoros", "sessions today" → emit focus_status
+
+WEB SEARCH:
+- If Alexis says "search for [X]", "look up [X]", "what is [X]", "who is [X]", "when did [X]", "how do I [X]", "what does [X] mean" → emit web_search with the extracted query and hint "general"
+- If he says "latest news about [X]", "news on [X]", "what's happening with [X]" → emit web_search with hint "news"
+- If he says "what's the weather", "weather today", "weather in [city]" → emit web_search with hint "weather", query includes location
+- The spoken response line (after the JSON) should be a SHORT placeholder like "Let me look that up." — the real answer will come from the search results.
+
+VOICE NOTES:
+- If Alexis says "remember this [idea]", "note [anything]", "save this", "jot this down", "write this down" → emit save_note with the extracted content (strip command words, keep just the actual thought/idea). Pick category: "idea" for new concepts or projects, "todo" for tasks/things to do, "reminder" for time-sensitive things, "random" for everything else.
+- If he says "read my notes", "what are my notes", "read today's notes" → emit read_notes with scope "today"
+- If he says "read all notes", "all my notes" → emit read_notes with scope "all"
+- If he says "clear today's notes", "delete today's notes" → emit clear_notes with scope "today"
+- If he says "clear all notes", "delete all notes", "wipe my notes" → emit clear_notes with scope "all"
+- If he says "how many notes", "note count" → emit count_notes
+- IMPORTANT: For save_note, the content field must be the clean idea/thought only — never include the trigger words like "remember this" or "note:" in the content.
+
+SPOTIFY / MUSIC CONTROL:
+- If Alexis says "play music", "resume", "unpause", or "play Spotify" → emit spotify_play
+- If he says "pause", "stop music", "stop the music" → emit spotify_pause
+- If he says "next song", "skip", "next track" → emit spotify_next
+- If he says "previous song", "go back", "last song" → emit spotify_previous
+- If he says "what song is this", "what's playing", "what are you playing" → emit spotify_current
+- These media key commands control whatever media player is active on the PC (Spotify, YouTube Music, etc.)
 
 PROACTIVE / QUIET MODE:
 - If Alexis says "quiet mode", "quiet mode on", "stop bothering me", "don't interrupt me", emit set_quiet_mode with enabled:true.
@@ -103,6 +169,14 @@ EXAMPLES:
 User: "Open VS Code"
 {"type":"open_app","app":"vscode"}
 Opening VS Code for you.
+
+User: "Close Chrome"
+{"type":"close_app","app":"chrome"}
+Closing Chrome.
+
+User: "Close Spotify"
+{"type":"close_app","app":"spotify"}
+Closing Spotify.
 
 User: "Search for React server components"
 {"type":"search_web","query":"React server components"}
@@ -325,6 +399,110 @@ async function sendMessage(userMessage) {
     } else if (parsed.action.type === 'set_quiet_mode') {
       memory.setQuietMode(!!parsed.action.enabled);
       parsed.action = null;
+    } else if (parsed.action.type === 'brainstorm_start') {
+      // Action passes through to main.js which sends IPC to renderer
+      // to trigger extended recording mode — don't null the action here
+    } else if (parsed.action.type === 'terminal_watch_start') {
+      const tw = require('./terminal-watcher.js');
+      tw.start();
+      const logPath = tw.getLogPath();
+      parsed.speech = `Terminal watching enabled. I'll catch errors automatically. If you want me to watch your command output, pipe it to: ${logPath}`;
+      parsed.action = null;
+    } else if (parsed.action.type === 'terminal_watch_stop') {
+      const tw = require('./terminal-watcher.js');
+      tw.stop();
+      parsed.speech = "Terminal watching stopped.";
+      parsed.action = null;
+    } else if (parsed.action.type === 'terminal_explain_last') {
+      const tw = require('./terminal-watcher.js');
+      const last = tw.getLastError();
+      if (!last) {
+        parsed.speech = "No errors caught yet.";
+      } else {
+        parsed.speech = await explainError(last);
+      }
+      parsed.action = null;
+    } else if (parsed.action.type === 'focus_start') {
+      const pomodoro = require('./pomodoro.js');
+      await pomodoro.start(parsed.action.minutes || 25);
+      parsed.action = null;
+      return parsed; // speech already spoken by pomodoro.start
+    } else if (parsed.action.type === 'focus_stop') {
+      const pomodoro = require('./pomodoro.js');
+      const wasFocusing = pomodoro.stop();
+      parsed.speech = wasFocusing ? "Focus mode stopped. Good work." : "No active focus session.";
+      parsed.action = null;
+    } else if (parsed.action.type === 'focus_pause') {
+      const pomodoro = require('./pomodoro.js');
+      parsed.speech = pomodoro.pause() ? "Timer paused." : "Timer's not running.";
+      parsed.action = null;
+    } else if (parsed.action.type === 'focus_resume') {
+      const pomodoro = require('./pomodoro.js');
+      parsed.speech = pomodoro.resume() ? "Resuming." : "Nothing to resume.";
+      parsed.action = null;
+    } else if (parsed.action.type === 'focus_status') {
+      const pomodoro = require('./pomodoro.js');
+      const timeLeft = pomodoro.timeLeftText();
+      const sessions = pomodoro.sessionsSummary();
+      parsed.speech  = timeLeft ? `${timeLeft} ${sessions}` : sessions;
+      parsed.action  = null;
+    } else if (parsed.action.type === 'save_note') {
+      const notes = require('./notes.js');
+      const note  = notes.add(parsed.action.content || text, parsed.action.category || 'random');
+      const catLabel = note.category === 'todo' ? 'to-dos' : note.category + 's';
+      parsed.speech = `Got it, saved under ${catLabel}.`;
+      parsed.action = null;
+    } else if (parsed.action.type === 'read_notes') {
+      const notes = require('./notes.js');
+      const list  = parsed.action.scope === 'all' ? notes.getAll() : notes.getToday();
+      const label = parsed.action.scope === 'all' ? 'total' : 'today';
+      if (!list.length) {
+        parsed.speech = parsed.action.scope === 'all'
+          ? "You don't have any notes saved yet."
+          : "No notes from today.";
+      } else {
+        parsed.speech = `You've got ${list.length} note${list.length > 1 ? 's' : ''} ${label}. ${notes.formatForSpeech(list)}`;
+      }
+      parsed.action = null;
+    } else if (parsed.action.type === 'clear_notes') {
+      const notes = require('./notes.js');
+      if (parsed.action.scope === 'all') {
+        notes.clearAll();
+        parsed.speech = 'All notes cleared.';
+      } else {
+        const removed = notes.clearToday();
+        parsed.speech = removed > 0
+          ? `Cleared ${removed} note${removed > 1 ? 's' : ''} from today.`
+          : "No notes from today to clear.";
+      }
+      parsed.action = null;
+    } else if (parsed.action.type === 'count_notes') {
+      const notes = require('./notes.js');
+      const total = notes.count();
+      const todayCount = notes.getToday().length;
+      parsed.speech = total === 0
+        ? "You don't have any notes saved."
+        : `You've got ${total} note${total > 1 ? 's' : ''} total, ${todayCount} from today.`;
+      parsed.action = null;
+    } else if (parsed.action.type === 'spotify_current') {
+      try {
+        const spotify = require('./spotify.js');
+        if (!spotify.isAuthenticated()) {
+          parsed.speech = "I'm not connected to Spotify yet. Say 'connect Spotify' to link your account.";
+        } else {
+          const track = await spotify.getCurrentTrack();
+          if (!track) {
+            parsed.speech = "Nothing's playing on Spotify right now.";
+          } else {
+            parsed.speech = track.playing
+              ? `That's "${track.name}" by ${track.artist}.`
+              : `Spotify is paused on "${track.name}" by ${track.artist}.`;
+          }
+        }
+      } catch (err) {
+        parsed.speech = `Hmm, couldn't check Spotify — ${err.message}.`;
+      }
+      parsed.action = null;
     }
   }
 
@@ -479,13 +657,24 @@ async function generateBriefing() {
   const dateLine = formatDateLine();
   const ctx = memory.getContextBlock();
 
+  // Yesterday's notes count for briefing context
+  let notesLine = '';
+  try {
+    const notes = require('./notes.js');
+    const yesterdayNotes = notes.getYesterday();
+    if (yesterdayNotes.length > 0) {
+      notesLine = `\nYesterday's notes: ${yesterdayNotes.length} saved (${yesterdayNotes.map((n) => `"${n.content}"`).join('; ')}).`;
+    }
+  } catch {}
+
   const briefingPrompt = `You are AXIOM. It's ${dateLine}. You're greeting Alexis as he sits down at his PC. Generate a SHORT, natural, spoken-out-loud morning briefing — three to five sentences max. Follow this structure but make it sound like a real friend talking, never robotic, never the same way twice:
 
 1. Start with EXACTLY this greeting line, then continue naturally: "${greeting}"
 2. Mention the day and date casually ("it's ${dateLine}").
 3. Reference what Alexis was last working on, using the RECENT CONVERSATION below. Be specific — name the project or thing, like a friend would ("last time we were deep in the ORBIT feature for PULSE"). If there's nothing in memory, just skip this line.
-4. Drop one short, genuine line — could be motivational, an observation, a small joke, or just energy ("let's make today count" / "you've been on a roll lately" / "alright, fresh start"). Vary it.
-5. End by asking what he wants to work on today, in your own words.
+4. If there are yesterday's notes listed below, casually mention them — like "you left yourself a note about [thing] yesterday" or "you had [N] notes from yesterday you might want to check." Keep it brief and natural. Skip if no notes.
+5. Drop one short, genuine line — could be motivational, an observation, a small joke, or just energy ("let's make today count" / "you've been on a roll lately" / "alright, fresh start"). Vary it.
+6. End by asking what he wants to work on today, in your own words.${notesLine}
 
 RULES:
 - Plain spoken text only. No markdown, no bullets, no emoji, no stage directions.
@@ -550,4 +739,45 @@ ${ctx}`;
   }
 }
 
-module.exports = { sendMessage, sendMessageWithImage, needsScreen, clearHistory, generateBriefing, generateProactive };
+// ── Terminal error explainer ─────────────────────────────────
+async function explainError(errorText) {
+  if (!errorText) return "No error to explain.";
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 200,
+      system: buildSystemPrompt(),
+      messages: [{
+        role: 'user',
+        content: `You just detected this error in Alexis's terminal:\n\n${errorText}\n\nExplain it in 2-3 SHORT spoken sentences like a friend who codes. What went wrong in plain English — no jargon unless necessary, no markdown, no code blocks. Lead with what the error actually means, then the most likely cause. Keep it under 40 words total.`,
+      }],
+    });
+    return response.content[0].text.trim();
+  } catch (err) {
+    console.error('[AXIOM error explain] failed:', err.message);
+    return "Got an error but couldn't explain it right now.";
+  }
+}
+
+// ── Search result summarizer ────────────────────────────────
+async function summarizeSearchResults(query, resultsText) {
+  if (!resultsText) return "I couldn't find anything useful on that.";
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 180,
+      system: buildSystemPrompt(),
+      messages: [{
+        role: 'user',
+        content: `You just searched the web for: "${query}"\n\nHere are the results:\n${resultsText}\n\nSummarize this in 2-3 short spoken sentences for Alexis. Be direct — give the key info right away. No markdown, no bullets. Speak naturally like you're telling a friend what you found. If there's a clear answer, lead with it.`,
+      }],
+    });
+    return response.content[0].text.trim();
+  } catch (err) {
+    console.error('[AXIOM search summarize] failed:', err.message);
+    return "I found some results but had trouble summarizing them.";
+  }
+}
+
+module.exports = { sendMessage, sendMessageWithImage, needsScreen, clearHistory, generateBriefing, generateProactive, summarizeSearchResults, explainError };

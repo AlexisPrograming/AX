@@ -20,7 +20,9 @@
       "Bash(node -c src/services/pc-control.js)",
       "Bash(node -c src/services/wakeword.js)",
       "Bash(node -c src/services/memory.js)",
-      "Bash(node -c src/services/proactive.js)"
+      "Bash(node -c src/services/proactive.js)",
+      "Bash(node -e \"const s = require\\('./src/services/spotify.js'\\); console.log\\('OK', Object.keys\\(s\\)\\)\")",
+      "Bash(node -e \"const { app } = require\\('electron'\\); console.log\\(app.getPath\\('userData'\\)\\)\")"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld('axiom', {
   onWakeWord: (cb) => ipcRenderer.on('wake-word-activated', () => cb()),
   onScreenHotkey: (cb) => ipcRenderer.on('screen-hotkey', (_e, base64) => cb(base64)),
   onProactive: (cb) => ipcRenderer.on('axiom-proactive', (_e, text) => cb(text)),
+  onBrainstormStart: (cb) => ipcRenderer.on('brainstorm-start', (_e, mode) => cb(mode)),
+  processBrainstorm: (arrayBuffer, mode) => ipcRenderer.invoke('process-brainstorm', { arrayBuffer, mode }),
 });
