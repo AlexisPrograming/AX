@@ -12,7 +12,12 @@
       "Bash(printf:*)",
       "Bash(node -c src/main/main.js)",
       "Bash(node -c src/main/preload.js)",
-      "Bash(node -c src/renderer/app.js)"
+      "Bash(node -c src/renderer/app.js)",
+      "Bash(npm uninstall:*)",
+      "Bash(node -c src/services/speaker.js)",
+      "Bash(node -c src/services/brain.js)",
+      "Bash(node -c src/services/routines.js)",
+      "Bash(node -c src/services/pc-control.js)"
     ]
   },
   "enableAllProjectMcpServers": true,

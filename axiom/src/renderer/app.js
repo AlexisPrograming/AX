@@ -274,3 +274,14 @@ closeBtn.addEventListener('click', () => {
 // ── Init ─────────────────────────────────────────────────
 
 setState('ready');
+
+// Daily briefing arrives from main on startup
+if (window.axiom.onBriefing) {
+  window.axiom.onBriefing((text) => {
+    addMessage('assistant', text);
+    setState('speaking');
+    // The main process is already speaking via the speaker service;
+    // we just reflect the state here.
+    setTimeout(() => setState('ready'), Math.min(15000, 2000 + text.length * 60));
+  });
+}

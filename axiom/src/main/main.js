@@ -152,7 +152,59 @@ app.whenReady().then(() => {
   } else {
     showWindow();
   }
+
+  // Daily briefing — runs once on startup unless disabled in .env
+  runDailyBriefing().catch((err) => console.error('[AXIOM briefing]', err));
 });
+
+async function runDailyBriefing() {
+  const enabled = (process.env.DAILY_BRIEFING || 'true').toLowerCase() !== 'false';
+  if (!enabled) return;
+
+  // Wait for the renderer to be ready
+  await new Promise((resolve) => {
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', resolve);
+    } else {
+      resolve();
+    }
+  });
+
+  showWindow();
+
+  try {
+    const { generateBriefing } = require('../services/brain.js');
+    const { speak } = require('../services/speaker.js');
+
+    const text = await generateBriefing();
+
+    // Display in the chat panel
+    mainWindow.webContents.send('axiom-briefing', text);
+
+    // Speak it
+    await speak(text);
+  } catch (err) {
+    console.error('[AXIOM briefing] failed:', err);
+  }
+
+  // Run any routines configured to trigger on startup
+  try {
+    const routines = require('../services/routines.js');
+    const { speak } = require('../services/speaker.js');
+    const { executeAction } = require('../services/pc-control.js');
+    const startupRoutines = routines.findByTrigger('startup');
+    for (const r of startupRoutines) {
+      await routines.run(r, { speak, executeAction });
+    }
+  } catch (err) {
+    console.error('[AXIOM startup routines]', err);
+  }
+
+  // Auto-hide ~10s after the speech finishes
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  }, 10000);
+}
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();

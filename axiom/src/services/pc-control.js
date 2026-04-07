@@ -1,5 +1,6 @@
 const { exec } = require('child_process');
 const path = require('path');
+const routines = require('./routines.js');
 
 // Known app shortcuts → actual commands
 const APP_MAP = {
@@ -39,6 +40,18 @@ async function executeAction(action) {
 
     case 'search_web':
       return searchWeb(action.query);
+
+    case 'open_url':
+      return openUrl(action.url);
+
+    case 'run_routine':
+      return runRoutine(action.name);
+
+    case 'list_routines':
+      return { success: true, output: listRoutineNames() };
+
+    case 'create_routine':
+      return createRoutine(action.routine);
 
     case 'open_path':
       return openPath(action.path);
@@ -86,6 +99,36 @@ function openApp(appName) {
 
   // Try launching directly — Windows will search PATH and Start Menu
   return run(`start "" "${appName}"`);
+}
+
+function openUrl(url) {
+  if (!url) return Promise.resolve({ success: false, error: 'No URL specified' });
+  let safeUrl = String(url).trim();
+  if (!/^https?:\/\//i.test(safeUrl)) safeUrl = 'https://' + safeUrl;
+  // Strip dangerous shell chars
+  if (/["'`\n\r]/.test(safeUrl)) {
+    return Promise.resolve({ success: false, error: 'Invalid characters in URL' });
+  }
+  return run(`start "" "${safeUrl}"`);
+}
+
+function runRoutine(name) {
+  // Lazy require to avoid circular dep at module load
+  const { speak } = require('./speaker.js');
+  return routines.run(name, { speak, executeAction });
+}
+
+function listRoutineNames() {
+  return routines.list().map((r) => r.name);
+}
+
+function createRoutine(routine) {
+  try {
+    routines.add(routine);
+    return Promise.resolve({ success: true, output: `Routine "${routine.name}" saved.` });
+  } catch (err) {
+    return Promise.resolve({ success: false, error: err.message });
+  }
 }
 
 function searchWeb(query) {

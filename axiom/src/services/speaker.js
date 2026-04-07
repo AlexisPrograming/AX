@@ -1,15 +1,17 @@
-const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+const { ElevenLabsClient } = require('@elevenlabs/elevenlabs-js');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-let tts = null;
+let client = null;
 let speaking = false;
 let playbackProcess = null;
+let cancelled = false;
 
-const VOICE = 'en-US-GuyNeural';
-const FORMAT = OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3;
+// "Adam" — natural warm male voice (ElevenLabs default voice ID)
+const VOICE_ID = 'pNInz6obpgDQGcFmaJgB';
+const MODEL_ID = 'eleven_turbo_v2_5';
 
 const PLAY_SCRIPT = `
 param([string]$FilePath)
@@ -34,38 +36,86 @@ $player.Close()
 const playScriptPath = path.join(os.tmpdir(), 'axiom-play.ps1');
 fs.writeFileSync(playScriptPath, PLAY_SCRIPT, 'utf8');
 
-async function ensureTTS() {
-  if (!tts) {
-    tts = new MsEdgeTTS();
-    await tts.setMetadata(VOICE, FORMAT);
+function getClient() {
+  if (!client) {
+    if (!process.env.ELEVENLABS_API_KEY) {
+      throw new Error('ELEVENLABS_API_KEY is missing from .env');
+    }
+    client = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
   }
-  return tts;
+  return client;
 }
 
 async function speak(text) {
   if (!text || !text.trim()) return;
   if (speaking) return;
   speaking = true;
+  cancelled = false;
+
+  const tmpDir = path.join(os.tmpdir(), `axiom-tts-${Date.now()}`);
+  const filePath = path.join(tmpDir, 'speech.mp3');
 
   try {
-    const engine = await ensureTTS();
-    const tmpDir = path.join(os.tmpdir(), `axiom-tts-${Date.now()}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-    const result = await engine.toFile(tmpDir, text);
-    const filePath = typeof result === 'string' ? result : result.audioFilePath;
+
+    // Stream MP3 from ElevenLabs into a temp file
+    const audioStream = await getClient().textToSpeech.stream(VOICE_ID, {
+      text,
+      modelId: MODEL_ID,
+      outputFormat: 'mp3_44100_128',
+      voiceSettings: {
+        stability: 0.45,        // a touch of variation for emotion
+        similarityBoost: 0.8,
+        style: 0.35,            // expressive, but not over the top
+        useSpeakerBoost: true,
+      },
+    });
+
+    await streamToFile(audioStream, filePath);
+    if (cancelled) return;
 
     await playAudio(filePath);
-
-    fs.unlink(filePath, () => {
-      fs.rmdir(tmpDir, () => {});
-    });
   } catch (err) {
-    tts = null;
-    if (err.killed || err.signal) return; // Interrupted by stop() — not an error
+    if (err && (err.killed || err.signal)) return; // interrupted by stop()
+    if (cancelled) return;
     throw err;
   } finally {
     speaking = false;
     playbackProcess = null;
+    fs.unlink(filePath, () => {
+      fs.rmdir(tmpDir, () => {});
+    });
+  }
+}
+
+async function streamToFile(stream, filePath) {
+  // Support web ReadableStream, Node Readable, or AsyncIterable<Buffer|Uint8Array>
+  const out = fs.createWriteStream(filePath);
+  try {
+    if (stream && typeof stream.getReader === 'function') {
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) out.write(Buffer.from(value));
+      }
+    } else if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of stream) {
+        out.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    } else if (stream && typeof stream.pipe === 'function') {
+      await new Promise((resolve, reject) => {
+        stream.pipe(out);
+        stream.on('end', resolve);
+        stream.on('error', reject);
+        out.on('error', reject);
+      });
+      return;
+    } else {
+      throw new Error('Unknown audio stream type from ElevenLabs');
+    }
+  } finally {
+    await new Promise((resolve) => out.end(resolve));
   }
 }
 
@@ -74,10 +124,10 @@ function playAudio(filePath) {
     playbackProcess = execFile(
       'powershell',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', playScriptPath, '-FilePath', filePath],
-      { timeout: 30000, windowsHide: true },
+      { timeout: 60000, windowsHide: true },
       (err) => {
         playbackProcess = null;
-        if (err && err.killed) return resolve(); // Killed by stop()
+        if (err && err.killed) return resolve(); // killed by stop()
         if (err) return reject(err);
         resolve();
       }
@@ -86,6 +136,7 @@ function playAudio(filePath) {
 }
 
 function stop() {
+  cancelled = true;
   if (playbackProcess && !playbackProcess.killed) {
     playbackProcess.kill();
     playbackProcess = null;
