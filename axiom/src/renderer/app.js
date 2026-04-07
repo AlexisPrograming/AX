@@ -8,6 +8,26 @@ const recDot = document.getElementById('rec-dot');
 
 let busy = false;
 let cancelled = false;
+let pendingScreenshot = null; // base64 PNG captured by the Alt+S hotkey, consumed by the next listen()
+
+// Screen-intent phrases — same regex list as brain.needsScreen so the renderer
+// can decide whether to capture before asking.
+const SCREEN_INTENT = [
+  /\bwhat'?s on (my|the) screen\b/i,
+  /\blook at (this|my screen|the screen)\b/i,
+  /\bwhat'?s wrong (here|with this)\b/i,
+  /\bwhat do you see\b/i,
+  /\bsee (this|my screen|the screen)\b/i,
+  /\bcheck (this|my screen|the screen)\b/i,
+  /\bread (this|my screen|the screen)\b/i,
+  /\bthis error\b/i,
+  /\bwhat does (this|it) say\b/i,
+  /\bhelp me (fix|debug) this\b/i,
+  /\bon my screen\b/i,
+];
+function needsScreen(text) {
+  return !!text && SCREEN_INTENT.some((re) => re.test(text));
+}
 
 // ── Whisper recording state ──────────────────────────────
 let mediaRecorder = null;
@@ -234,7 +254,24 @@ async function listen() {
     addMessage('user', result.text);
     setState('thinking');
 
-    const reply = await window.axiom.sendToClaude(result.text);
+    // Decide whether this turn needs vision:
+    //  - Alt+S already pre-captured a screenshot → use it
+    //  - Or the phrase triggers the screen intent → capture now
+    let reply;
+    if (pendingScreenshot) {
+      const shot = pendingScreenshot;
+      pendingScreenshot = null;
+      reply = await window.axiom.sendToClaudeWithScreen(result.text, shot);
+    } else if (needsScreen(result.text)) {
+      const cap = await window.axiom.captureScreen();
+      if (cap && cap.ok) {
+        reply = await window.axiom.sendToClaudeWithScreen(result.text, cap.base64);
+      } else {
+        reply = await window.axiom.sendToClaude(result.text);
+      }
+    } else {
+      reply = await window.axiom.sendToClaude(result.text);
+    }
 
     if (cancelled) return;
 
@@ -259,6 +296,7 @@ async function listen() {
 // ── Event Listeners ──────────────────────────────────────
 
 micBtn.addEventListener('click', () => {
+  window.axiom.userActive && window.axiom.userActive();
   if (busy) {
     cancelAll();
   } else {
@@ -274,6 +312,29 @@ closeBtn.addEventListener('click', () => {
 // ── Init ─────────────────────────────────────────────────
 
 setState('ready');
+
+// Wake word "Hey AX" — auto-start the listening pipeline
+if (window.axiom.onWakeWord) {
+  window.axiom.onWakeWord(() => {
+    if (!busy) listen();
+  });
+}
+
+// Alt+S hotkey — screenshot already captured in main, stash it and start listening
+if (window.axiom.onScreenHotkey) {
+  window.axiom.onScreenHotkey((base64) => {
+    pendingScreenshot = base64 || null;
+    addMessage('system', 'Screenshot captured. Ask me about it.');
+    if (!busy) listen();
+  });
+}
+
+// Proactive messages from AXIOM (silence check-ins, break nudges, etc.)
+if (window.axiom.onProactive) {
+  window.axiom.onProactive((text) => {
+    addMessage('assistant', text);
+  });
+}
 
 // Daily briefing arrives from main on startup
 if (window.axiom.onBriefing) {

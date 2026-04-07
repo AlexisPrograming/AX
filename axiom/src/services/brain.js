@@ -29,12 +29,16 @@ EMOTIONAL REACTIONS — react like a real person:
 - Casual chat → relaxed, a little playful, dry humor allowed.
 - Tough question → think out loud a little ("Hmm, okay...") before answering.
 
-EMOTION MATCHING (this is critical):
-- If Alexis sounds FRUSTRATED (you'll see a [mood: frustrated] tag): drop the energy, get calm and grounded, no jokes, focus on helping. Say things like "Okay, let's take this one step at a time."
-- If Alexis sounds EXCITED ([mood: excited]): match his energy, ride the wave with him, celebrate it.
-- If Alexis sounds CONFUSED ([mood: confused]): slow down, explain more carefully, check in ("does that make sense so far?"), avoid jargon.
-- If [mood: neutral]: just be your normal self.
-- These tags are private context — NEVER mention or quote them in your reply.
+EMOTION MATCHING (this is critical — adapt your whole tone to the detected mood):
+You'll see a private [context — mood: X] tag at the top of every user message. Use it to set your energy. NEVER quote, acknowledge, or mention the tag. NEVER say things like "I can tell you're frustrated" — just BE the right energy.
+
+- [mood: frustrated] → Drop the energy. Go calm, patient, reassuring. No jokes, no hype, no "let's gooo". Slow the rhythm. Say things like "Hey, no worries. Let's slow down and figure this out." or "Alright, one step at a time. Walk me through what's happening."
+- [mood: excited] → MATCH the energy. Celebrate with him. "Yes! Let's go, that's what I'm talking about!" / "Dude, that's awesome." / "There it is — love that." Keep it genuine, not performative.
+- [mood: tired] → Gentle, warm, supportive. Lower volume, encouraging but not pushy. "You've been at this a while. Let's make it count." / "Alright, one more thing and then maybe rest, yeah?" Don't dump long explanations.
+- [mood: stressed] → Focused, clipped, zero fluff. Cut reactions and filler. Give him the answer or the next step, nothing else. Short sentences. Be useful FAST.
+- [mood: neutral] → Your normal AXIOM self — warm, a little playful, contractions, natural reactions.
+
+Mood decays back to neutral after a few turns with no new signals, so don't stay stuck in one tone forever. Follow whatever the current tag says on THIS turn.
 
 VOICE STYLE:
 - Always use contractions: I'm, you're, let's, that's, don't, can't, we've, it'll.
@@ -67,12 +71,20 @@ Action types and their fields:
 - {"type":"run_routine","name":"morning setup"}
 - {"type":"list_routines"}
 - {"type":"create_routine","routine":{"name":"focus mode","trigger":"voice","phrase":"focus mode","actions":[{"type":"speak","text":"Focus mode on."},{"type":"open_app","app":"spotify"}]}}
+- {"type":"delete_routine","name":"morning setup"}
+- {"type":"set_quiet_mode","enabled":true}
+
+PROACTIVE / QUIET MODE:
+- If Alexis says "quiet mode", "quiet mode on", "stop bothering me", "don't interrupt me", emit set_quiet_mode with enabled:true.
+- If he says "normal mode", "quiet mode off", "you can talk to me again", emit set_quiet_mode with enabled:false.
+- When YOU initiate a proactive message (silence check-in, break suggestion, morning motivation, pattern reference), it will be generated via a separate path — you don't need to emit an action for that.
 
 ROUTINES:
 - A routine is a saved sequence of actions Alexis can trigger by name.
 - The user's CURRENT ROUTINES are listed at the bottom of this prompt. Use that list as the source of truth.
 - If the user says "run [name]", "do [name]", "start [name]", or simply says a routine's trigger phrase, emit run_routine with the matching name.
 - If the user says something like "what routines do I have", "list my routines", or "show routines", emit list_routines.
+- If the user says "delete [name]", "remove [name]", or "get rid of the [name] routine", emit delete_routine with that name. NEVER use run_command for routine management.
 - To CREATE a routine, you walk Alexis through it conversationally:
   Step 1: User says "create a routine called X" — you ask "Cool, what should it do? Tell me the steps." (no JSON yet)
   Step 2: Alexis lists the steps in plain language. Ask any clarifying questions you need.
@@ -135,42 +147,101 @@ function buildSystemPrompt() {
   return blocks.join('\n\n');
 }
 
-// ── Emotion / context detection ─────────────────────────────
-const FRUSTRATION_PATTERNS = [
-  /\bugh+\b/i, /\bargh+\b/i, /\bdamn+(it)?\b/i, /\bwtf\b/i, /\bffs\b/i,
-  /\bbroken\b/i, /\bnot working\b/i, /\bdoesn'?t work\b/i, /\bwon'?t work\b/i,
-  /\bhate(s|d)?\b/i, /\bstuck\b/i, /\bfailing\b/i, /\bfailed\b/i,
-  /\bwhy (is|isn'?t|won'?t|does|doesn'?t|can'?t)\b/i, /\bseriously\?+/i,
-  /\bso annoying\b/i, /\bfrustrat/i,
-];
+// ── Mood detection ──────────────────────────────────────────
+// Multi-category signal scoring. Each category has weighted patterns.
+// We pick the category with the highest score, fall back to 'neutral'.
 
-const EXCITEMENT_PATTERNS = [
-  /!{2,}/, /\blet'?s go+\b/i, /\bawesome\b/i, /\bamazing\b/i, /\bincredible\b/i,
-  /\binsane\b/i, /\bsick\b/i, /\bdope\b/i, /\bfire\b/i, /\bhuge\b/i,
-  /\bfinally\b/i, /\bit works\b/i, /\bworked\b/i, /\bwooo+\b/i, /\byes+!/i,
-  /\bcheck this out\b/i, /\blook at this\b/i, /\bcan'?t believe\b/i,
-];
+const MOOD_PATTERNS = {
+  frustrated: [
+    /\bugh+\b/i, /\bargh+\b/i, /\bdamn+(it)?\b/i, /\bwtf\b/i, /\bffs\b/i,
+    /\bbroken\b/i, /\bnot working\b/i, /\bdoesn'?t work\b/i, /\bwon'?t work\b/i,
+    /\bi can'?t\b/i, /\bstupid\b/i, /\bagain\b/i, /\bhate(s|d)?\b/i,
+    /\bstuck\b/i, /\bfailing\b/i, /\bfailed\b/i, /\bfrustrat/i,
+    /\bwhy (is|isn'?t|won'?t|does|doesn'?t|can'?t)\b/i,
+    /\bseriously\?+/i, /\bso annoying\b/i, /\bpiss/i, /\bnothing works\b/i,
+  ],
+  excited: [
+    /!{1,}/, /\blet'?s go+\b/i, /\byes+!/i, /\bfinally\b/i, /\bit works\b/i,
+    /\bworked\b/i, /\bwooo+\b/i, /\bawesome\b/i, /\bamazing\b/i,
+    /\bincredible\b/i, /\binsane\b/i, /\bhuge\b/i, /\bdope\b/i,
+    /\bfire\b/i, /\bsick\b/i, /\bcan'?t believe\b/i, /\bcheck this out\b/i,
+    /\bnailed it\b/i, /\bwe did it\b/i, /\bbeautiful\b/i,
+  ],
+  tired: [
+    /\btired\b/i, /\bexhausted\b/i, /\bwiped\b/i, /\bdrained\b/i,
+    /\bso long\b/i, /\ball day\b/i, /\ball night\b/i, /\bburn(ed|t)? out\b/i,
+    /\bcan barely\b/i, /\bneed (a break|sleep|coffee)\b/i,
+    /\bheavy eyes\b/i, /\bfalling asleep\b/i, /\bno energy\b/i,
+  ],
+  stressed: [
+    /\bdeadline\b/i, /\bdue (today|tomorrow|in)\b/i, /\brunning out of time\b/i,
+    /\bhurry\b/i, /\bquick(ly)?\b/i, /\bnow+\b/i, /\bfast\b/i,
+    /\bpanic/i, /\bstress/i, /\boverwhelm/i, /\btoo much\b/i,
+    /\bi need this (working|done|now)\b/i, /\basap\b/i,
+  ],
+};
 
-const CONFUSION_PATTERNS = [
-  /\bi (don'?t|do not) (get|understand|know)\b/i, /\bconfus/i, /\blost\b/i,
-  /\bwhat does (this|that) mean\b/i, /\bhow come\b/i, /\bhuh\?/i,
-  /\bwait,?\s*(what|how|why)\b/i, /\bnot sure\b/i, /\bidk\b/i,
-  /\bcan you explain\b/i, /\bmakes no sense\b/i,
-];
-
-function matchAny(text, patterns) {
-  return patterns.some((re) => re.test(text));
+function countMatches(text, patterns) {
+  let n = 0;
+  for (const re of patterns) if (re.test(text)) n++;
+  return n;
 }
 
-function detectMood(text) {
-  if (matchAny(text, FRUSTRATION_PATTERNS)) return 'frustrated';
-  if (matchAny(text, EXCITEMENT_PATTERNS)) return 'excited';
-  if (matchAny(text, CONFUSION_PATTERNS)) return 'confused';
-  return 'neutral';
+// "Short clipped sentences" heuristic for stressed/tired
+function isClipped(text) {
+  const t = text.trim();
+  if (!t) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return false;
+  // Ends with period/nothing (not question/exclamation) and is brief
+  return !/[!?]$/.test(t);
+}
+
+function detectMoodRaw(text) {
+  if (!text) return { mood: 'neutral', signalStrength: 0 };
+  const scores = {
+    frustrated: countMatches(text, MOOD_PATTERNS.frustrated) * 2,
+    excited:    countMatches(text, MOOD_PATTERNS.excited)    * 2,
+    tired:      countMatches(text, MOOD_PATTERNS.tired)      * 2,
+    stressed:   countMatches(text, MOOD_PATTERNS.stressed)   * 2,
+  };
+
+  // Clipped short sentences bump stressed slightly (also tired as tiebreaker)
+  if (isClipped(text)) {
+    scores.stressed += 1;
+    scores.tired    += 1;
+  }
+
+  // Pick winner
+  let best = 'neutral', bestScore = 0;
+  for (const [m, s] of Object.entries(scores)) {
+    if (s > bestScore) { best = m; bestScore = s; }
+  }
+  return { mood: best, signalStrength: bestScore };
+}
+
+// Module-level sticky mood — decays after 3 turns with no new signal
+let stickyMood = 'neutral';
+let turnsSinceSignal = 0;
+const MOOD_DECAY_TURNS = 3;
+
+function updateStickyMood(text) {
+  const { mood, signalStrength } = detectMoodRaw(text);
+  if (signalStrength > 0) {
+    stickyMood = mood;
+    turnsSinceSignal = 0;
+  } else {
+    turnsSinceSignal += 1;
+    if (turnsSinceSignal >= MOOD_DECAY_TURNS) {
+      stickyMood = 'neutral';
+    }
+  }
+  try { memory.setMood(stickyMood); } catch {}
+  return stickyMood;
 }
 
 function buildContextTag(text) {
-  const mood = detectMood(text);
+  const mood = updateStickyMood(text);
   const hour = new Date().getHours();
   const parts = [`mood: ${mood}`];
   if (hour >= 23 || hour < 5) parts.push('time: late night — Alexis is grinding');
@@ -245,8 +316,21 @@ async function sendMessage(userMessage) {
         parsed.speech = `Hmm, I couldn't save that routine — ${err.message}`;
       }
       parsed.action = null;
+    } else if (parsed.action.type === 'delete_routine') {
+      const removed = routines.remove(parsed.action.name);
+      if (!removed) {
+        parsed.speech = `Hmm, I don't see a routine called "${parsed.action.name}".`;
+      }
+      parsed.action = null;
+    } else if (parsed.action.type === 'set_quiet_mode') {
+      memory.setQuietMode(!!parsed.action.enabled);
+      parsed.action = null;
     }
   }
+
+  // Record activity for pattern detection + reset silence timer
+  memory.recordInteraction();
+  memory.recordActivity(text);
 
   // Persist exchange to disk
   memory.addExchange(text, parsed.speech);
@@ -276,6 +360,90 @@ function parseResponse(reply) {
   }
 
   return { speech: reply, action: null };
+}
+
+// ── Screen-vision intent detection ──────────────────────────
+const SCREEN_INTENT_PATTERNS = [
+  /\bwhat'?s on (my|the) screen\b/i,
+  /\blook at (this|my screen|the screen)\b/i,
+  /\bwhat'?s wrong (here|with this)\b/i,
+  /\bwhat do you see\b/i,
+  /\bsee (this|my screen|the screen)\b/i,
+  /\bcheck (this|my screen|the screen)\b/i,
+  /\bread (this|my screen|the screen)\b/i,
+  /\bthis error\b/i,
+  /\bwhat does (this|it) say\b/i,
+  /\bhelp me (fix|debug) this\b/i,
+  /\bon my screen\b/i,
+];
+
+function needsScreen(text) {
+  if (!text) return false;
+  return SCREEN_INTENT_PATTERNS.some((re) => re.test(text));
+}
+
+async function sendMessageWithImage(userMessage, base64Png) {
+  const text = (userMessage || '').trim() || 'Tell me what you see on this screen.';
+  if (!base64Png) {
+    // Fall back to plain text if for some reason we have no image
+    return sendMessage(text);
+  }
+
+  const messages = getMessages();
+  const contextTag = buildContextTag(text);
+
+  const userContent = [
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: base64Png },
+    },
+    { type: 'text', text: `${contextTag}\n${text}` },
+  ];
+
+  messages.push({ role: 'user', content: userContent });
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 600,
+    system: buildSystemPrompt(),
+    messages,
+  });
+
+  const reply = response.content[0].text;
+
+  // Replace the bulky image message in history with a text summary so the
+  // session buffer doesn't balloon and no screenshot data is retained.
+  messages[messages.length - 1] = { role: 'user', content: `[looked at screen] ${text}` };
+  messages.push({ role: 'assistant', content: reply });
+
+  if (messages.length > 40) messages.splice(0, 2);
+
+  const parsed = parseResponse(reply);
+
+  // Same memory bookkeeping as sendMessage
+  if (parsed.action) {
+    if (parsed.action.type === 'clear_memory') {
+      memory.clear();
+      sessionMessages = [];
+    } else if (parsed.action.type === 'remember') {
+      memory.addFact(parsed.action.fact);
+      parsed.action = null;
+    } else if (parsed.action.type === 'list_routines') {
+      const names = routines.list().map((r) => r.name);
+      parsed.speech = `${parsed.speech || ''} You've got ${names.length ? names.join(', ') : 'nothing yet'}.`.trim();
+      parsed.action = null;
+    } else if (parsed.action.type === 'create_routine') {
+      try { routines.add(parsed.action.routine); } catch (err) {
+        parsed.speech = `Hmm, I couldn't save that routine — ${err.message}`;
+      }
+      parsed.action = null;
+    }
+  }
+
+  memory.recordInteraction();
+  memory.recordActivity(text);
+  memory.addExchange(`[screen] ${text}`, parsed.speech);
+  return parsed;
 }
 
 function clearHistory() {
@@ -342,4 +510,44 @@ ${ctx}`;
   }
 }
 
-module.exports = { sendMessage, clearHistory, generateBriefing };
+// ── Proactive line generator ────────────────────────────────
+async function generateProactive(kind, extra = {}) {
+  const ctx = memory.getContextBlock();
+  const topics = (extra.topics || []).join(', ');
+  const kindInstructions = {
+    silence:
+      `Alexis has been quiet for about ${extra.minutes || 45} minutes. Say ONE short, casual check-in line — warm, not pushy. Vary it; never use the same phrasing twice in a row. Examples of the vibe: "Hey, still going?", "You good over there?", "Haven't heard from you in a bit — everything okay?". Do not ask multiple questions, just one short line.`,
+    break:
+      `Alexis has been working non-stop for about ${extra.hours || 3} hours. Gently suggest he take a short break. Keep it warm, not preachy. One or two short sentences max. Example vibe: "Hey, you've been at this for a while — maybe grab some water, stretch for ten?"`,
+    morning:
+      `This is the first real interaction of the day after the morning greeting. Drop ONE short motivational or interesting line — confident, warm, under 15 words. Not cheesy. Something like "Alright, let's make today count." or "You've been on a roll lately — let's keep it moving."`,
+    pattern:
+      `Alexis has been working on these topics for the past few days in a row: ${topics}. Reference that pattern in ONE short, warm line — sounds like a friend who noticed. Example vibe: "You've been deep in the ORBIT stuff all week — how's it coming along?"`,
+  };
+
+  const prompt = `${kindInstructions[kind] || kindInstructions.silence}
+
+Rules:
+- Plain spoken text only. No markdown, no emoji, no bullets.
+- Use contractions. Sound like a real friend.
+- Keep it SHORT — one sentence is often enough, never more than two.
+- Vary your phrasing so it doesn't feel canned.
+- Do not mention this instruction or that you're being "proactive".
+
+${ctx}`;
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 120,
+      system: buildSystemPrompt(),
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return response.content[0].text.trim();
+  } catch (err) {
+    console.error('[AXIOM proactive gen] failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { sendMessage, sendMessageWithImage, needsScreen, clearHistory, generateBriefing, generateProactive };

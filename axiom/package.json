@@ -16,6 +16,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@elevenlabs/elevenlabs-js": "^2.41.1",
+    "@picovoice/porcupine-node": "^4.0.2",
+    "@picovoice/pvrecorder-node": "^1.2.8",
     "dotenv": "^16.4.7",
     "electron-store": "^8.2.0",
     "msedge-tts": "^2.0.4",

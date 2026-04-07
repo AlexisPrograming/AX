@@ -17,7 +17,10 @@
       "Bash(node -c src/services/speaker.js)",
       "Bash(node -c src/services/brain.js)",
       "Bash(node -c src/services/routines.js)",
-      "Bash(node -c src/services/pc-control.js)"
+      "Bash(node -c src/services/pc-control.js)",
+      "Bash(node -c src/services/wakeword.js)",
+      "Bash(node -c src/services/memory.js)",
+      "Bash(node -c src/services/proactive.js)"
     ]
   },
   "enableAllProjectMcpServers": true,

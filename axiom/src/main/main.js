@@ -1,8 +1,11 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, Notification, session } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, Notification, session, powerMonitor, shell, desktopCapturer } = require('electron');
 const path = require('path');
+const { exec } = require('child_process');
 const Store = require('electron-store');
 const OpenAI = require('openai');
 const { toFile } = require('openai/uploads');
+const wakeword = require('../services/wakeword.js');
+const proactive = require('../services/proactive.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -144,6 +147,22 @@ app.whenReady().then(() => {
     toggleWindow();
   });
 
+  globalShortcut.register('Alt+S', async () => {
+    try {
+      // Hide the overlay so it's not in the shot, capture, then reveal
+      const wasVisible = mainWindow.isVisible();
+      if (wasVisible) mainWindow.hide();
+      await new Promise((r) => setTimeout(r, 120));
+
+      const shot = await captureScreenshot();
+      showWindow();
+      mainWindow.webContents.send('screen-hotkey', shot); // base64 PNG
+    } catch (err) {
+      console.error('[AXIOM screen hotkey] failed:', err);
+      showWindow();
+    }
+  });
+
   if (launchedAtLogin) {
     showFirstRunNotification();
   } else if (store.get('firstRun')) {
@@ -155,7 +174,60 @@ app.whenReady().then(() => {
 
   // Daily briefing — runs once on startup unless disabled in .env
   runDailyBriefing().catch((err) => console.error('[AXIOM briefing]', err));
+
+  // Offline wake word ("Hey AX")
+  startWakeWord();
+
+  // Proactive companion loop
+  try {
+    const { speak } = require('../services/speaker.js');
+    const { generateProactive } = require('../services/brain.js');
+    proactive.start({
+      speak,
+      generateProactive,
+      sendToRenderer: (text) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          showWindow();
+          mainWindow.webContents.send('axiom-proactive', text);
+        }
+      },
+    });
+  } catch (err) {
+    console.error('[AXIOM proactive] init failed:', err);
+  }
+
+  // Keep the wake-word listener alive across sleep/wake cycles
+  powerMonitor.on('suspend', async () => {
+    console.log('[AXIOM] system suspending — stopping wake word');
+    await wakeword.stop();
+  });
+  powerMonitor.on('resume', () => {
+    console.log('[AXIOM] system resumed — restarting wake word');
+    startWakeWord();
+  });
 });
+
+async function startWakeWord() {
+  const result = await wakeword.start(onWakeWordDetected);
+  if (!result.ok && !result.alreadyRunning) {
+    console.warn('[AXIOM wakeword] not started:', result.error);
+  }
+}
+
+function onWakeWordDetected() {
+  // Small chime + show window + tell renderer to start listening
+  playActivationChime();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showWindow();
+    mainWindow.webContents.send('wake-word-activated');
+  }
+}
+
+function playActivationChime() {
+  // Uses the built-in Windows "Asterisk" system sound — no file shipping needed.
+  const ps = `powershell -NoProfile -WindowStyle Hidden -Command "[System.Media.SystemSounds]::Asterisk.Play()"`;
+  exec(ps, { windowsHide: true }, () => {});
+}
 
 async function runDailyBriefing() {
   const enabled = (process.env.DAILY_BRIEFING || 'true').toLowerCase() !== 'false';
@@ -200,16 +272,30 @@ async function runDailyBriefing() {
     console.error('[AXIOM startup routines]', err);
   }
 
-  // Auto-hide ~10s after the speech finishes
+  // One short morning motivation line (once per day) + opportunistic pattern nudge
   setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-  }, 10000);
+    proactive.morningMotivation().catch(() => {});
+  }, 4000);
+  setTimeout(() => {
+    proactive.checkRecurringPattern().catch(() => {});
+  }, 12000);
+
+  // Window stays open after the briefing — user hides it manually via the X
+  // button, Alt+Space, or the tray. No auto-hide.
 }
 
-app.on('will-quit', () => {
+ipcMain.on('user-active', () => {
+  // kept for future use; no-op for now
+});
+
+app.on('will-quit', async () => {
   globalShortcut.unregisterAll();
-  const { shutdown } = require('../services/speech.js');
-  shutdown();
+  try {
+    const { shutdown } = require('../services/speech.js');
+    shutdown();
+  } catch {}
+  await wakeword.stop();
+  proactive.stop();
 });
 
 app.on('window-all-closed', (e) => {
@@ -222,6 +308,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
   const { sendMessage } = require('../services/brain.js');
   const { executeAction } = require('../services/pc-control.js');
 
+  proactive.recordInteraction();
   const result = await sendMessage(message);
 
   if (result.action) {
@@ -240,6 +327,50 @@ ipcMain.handle('speak-text', async (_event, text) => {
 ipcMain.handle('stop-speaking', async () => {
   const { stop } = require('../services/speaker.js');
   stop();
+});
+
+// ── Screen capture ──────────────────────────────────────────
+async function captureScreenshot() {
+  const { width, height } = screen.getPrimaryDisplay().size;
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width, height },
+  });
+  if (!sources.length) throw new Error('No screen sources available');
+  // Pick the primary display (first source)
+  const img = sources[0].thumbnail;
+  // Return base64 PNG (no data: prefix)
+  return img.toPNG().toString('base64');
+}
+
+ipcMain.handle('capture-screen', async () => {
+  try {
+    return { ok: true, base64: await captureScreenshot() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) => {
+  const { sendMessageWithImage } = require('../services/brain.js');
+  const { executeAction } = require('../services/pc-control.js');
+
+  proactive.recordInteraction();
+  let b64 = base64;
+  try {
+    if (!b64) b64 = await captureScreenshot();
+    const result = await sendMessageWithImage(text, b64);
+
+    if (result.action) {
+      const actionResult = await executeAction(result.action);
+      console.log('[AXIOM action]', result.action.type, actionResult);
+    }
+    return result.speech;
+  } finally {
+    // Nothing is persisted — the base64 lives in memory only and is
+    // released when this handler returns. Scrub the local reference.
+    b64 = null;
+  }
 });
 
 ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {

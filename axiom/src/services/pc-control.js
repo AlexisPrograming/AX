@@ -53,6 +53,9 @@ async function executeAction(action) {
     case 'create_routine':
       return createRoutine(action.routine);
 
+    case 'delete_routine':
+      return deleteRoutine(action.name);
+
     case 'open_path':
       return openPath(action.path);
 
@@ -120,6 +123,16 @@ function runRoutine(name) {
 
 function listRoutineNames() {
   return routines.list().map((r) => r.name);
+}
+
+function deleteRoutine(name) {
+  if (!name) return Promise.resolve({ success: false, error: 'No routine name' });
+  const removed = routines.remove(name);
+  return Promise.resolve(
+    removed
+      ? { success: true, output: `Routine "${name}" deleted.` }
+      : { success: false, error: `No routine named "${name}"` }
+  );
 }
 
 function createRoutine(routine) {
