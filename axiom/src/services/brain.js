@@ -142,6 +142,13 @@ SPOTIFY / MUSIC CONTROL:
 - These media key commands control whatever media player is active on the PC (Spotify, YouTube Music, etc.)
 - If the user just says "play music" with no player context, default to opening YouTube Music with open_url "https://music.youtube.com"
 
+FOLLOW-UP LISTENING:
+- If your response asks Alexis a question, needs his input, or requires clarification before you can proceed → append [NEEDS_REPLY] at the very end of your speech text (after all other content, no space before it). The microphone will automatically reopen so he can answer without pressing anything.
+- If you're just giving information, completing a task, confirming something, or making a statement → do NOT include [NEEDS_REPLY]. The mic stays closed.
+- Examples that NEED [NEEDS_REPLY]: "Which app do you want me to open?[NEEDS_REPLY]" / "Got it — what folder should I save it to?[NEEDS_REPLY]" / "Want me to go ahead and close everything?[NEEDS_REPLY]"
+- Examples that do NOT: "Opening Chrome." / "Done, saved to your documents." / "It's 72 degrees in Miami."
+- NEVER include [NEEDS_REPLY] on actions like open_app, web_search, etc. Only include it in pure speech responses that await input.
+
 PROACTIVE / QUIET MODE:
 - If Alexis says "quiet mode", "quiet mode on", "stop bothering me", "don't interrupt me", emit set_quiet_mode with enabled:true.
 - If he says "normal mode", "quiet mode off", "you can talk to me again", emit set_quiet_mode with enabled:false.
@@ -512,14 +519,25 @@ async function sendMessage(userMessage) {
   return parsed;
 }
 
+// Regex patterns that indicate a response is asking for input
+const NEEDS_REPLY_PATTERNS = [
+  /\[NEEDS_REPLY\]/,
+  /\?\s*$/,                                          // ends with question mark
+  /\b(which (one|would|do|should)|choose between)\b/i,
+  /\b(can you (tell|clarify|explain|give)|could you)\b/i,
+  /\bwhat (do you|would you|did you|should i)\b/i,
+  /\b(want me to|should i|shall i) (go ahead|proceed|continue|do that)\b/i,
+  /\blet me know\b/i,
+];
+
 function parseResponse(reply) {
-  if (!reply) return { speech: '', action: null };
+  if (!reply) return { speech: '', action: null, needsReply: false };
 
   // Strip any [context — ...] tag Claude might accidentally echo back
   const cleaned = reply.replace(/^\[context\s*[—–-][^\]]*\]\s*/i, '').trim();
 
   const lines = cleaned.split('\n').filter((l) => l.trim());
-  if (lines.length === 0) return { speech: cleaned, action: null };
+  if (lines.length === 0) return { speech: cleaned, action: null, needsReply: false };
 
   // Search every line for an embedded JSON action object
   for (let i = 0; i < lines.length; i++) {
@@ -530,8 +548,10 @@ function parseResponse(reply) {
       try {
         const action = JSON.parse(line);
         if (action.type) {
-          const speech = [...lines.slice(0, i), ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
-          return { speech, action };
+          const rawSpeech = [...lines.slice(0, i), ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
+          const speech = rawSpeech.replace(/\[NEEDS_REPLY\]/g, '').trim();
+          const needsReply = NEEDS_REPLY_PATTERNS.some(p => p.test(rawSpeech));
+          return { speech, action, needsReply };
         }
       } catch { /* not valid JSON */ }
     }
@@ -543,14 +563,18 @@ function parseResponse(reply) {
         const action = JSON.parse(inlineMatch[1]);
         if (action.type) {
           const rest = inlineMatch[2].trim();
-          const speech = [...lines.slice(0, i), rest, ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
-          return { speech, action };
+          const rawSpeech = [...lines.slice(0, i), rest, ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
+          const speech = rawSpeech.replace(/\[NEEDS_REPLY\]/g, '').trim();
+          const needsReply = NEEDS_REPLY_PATTERNS.some(p => p.test(rawSpeech));
+          return { speech, action, needsReply };
         }
       } catch { /* not valid JSON */ }
     }
   }
 
-  return { speech: cleaned, action: null };
+  const speech = cleaned.replace(/\[NEEDS_REPLY\]/g, '').trim();
+  const needsReply = NEEDS_REPLY_PATTERNS.some(p => p.test(cleaned));
+  return { speech, action: null, needsReply };
 }
 
 // ── Clipboard intent detection ──────────────────────────────

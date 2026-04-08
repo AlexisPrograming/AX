@@ -175,10 +175,24 @@ const CLOSE_MAP = {
   'cmd':          'cmd.exe',
 };
 
+// Critical system processes that must never be killed
+const PROTECTED_PROCESSES = new Set([
+  'explorer.exe', 'svchost.exe', 'lsass.exe', 'csrss.exe', 'winlogon.exe',
+  'wininit.exe', 'services.exe', 'system', 'smss.exe', 'dwm.exe',
+  'taskhostw.exe', 'spoolsv.exe', 'audiodg.exe', 'fontdrvhost.exe',
+  'sihost.exe', 'ctfmon.exe', 'runtimebroker.exe', 'shellexperiencehost.exe',
+  'searchindexer.exe', 'antimalware service executable',
+]);
+
 function closeApp(appName) {
   if (!appName) return Promise.resolve({ success: false, error: 'No app specified' });
   const key = appName.toLowerCase().trim();
-  const proc = CLOSE_MAP[key] || `${appName}.exe`;
+  const proc = (CLOSE_MAP[key] || `${appName}.exe`).toLowerCase();
+
+  if (PROTECTED_PROCESSES.has(proc)) {
+    return Promise.resolve({ success: false, error: `"${proc}" is a protected system process and cannot be closed.` });
+  }
+
   return run(`taskkill /IM "${proc}" /F`);
 }
 
@@ -295,7 +309,7 @@ function setReminder(message, minutes) {
   return Promise.resolve({ success: true, output: `Reminder set for ${mins} minute(s)` });
 }
 
-// Block only genuinely destructive system commands
+// Block genuinely destructive system commands
 const BLOCKED_PATTERNS = [
   /\bformat\s+[a-z]:/i,
   /\bdiskpart\b/i,
@@ -312,12 +326,22 @@ const BLOCKED_PATTERNS = [
 function runSafe(command) {
   if (!command) return Promise.resolve({ success: false, error: 'No command specified' });
 
-  const blocked = BLOCKED_PATTERNS.some((p) => p.test(command.trim()));
-  if (blocked) {
+  const cmd = command.trim();
+
+  if (BLOCKED_PATTERNS.some((p) => p.test(cmd))) {
     return Promise.resolve({ success: false, error: `Blocked dangerous command: ${command}` });
   }
 
-  return run(command);
+  // Block taskkill on protected processes
+  const taskkillMatch = cmd.match(/taskkill\s+.*?\/IM\s+"?([^"\s]+)"?/i);
+  if (taskkillMatch) {
+    const proc = taskkillMatch[1].toLowerCase();
+    if (PROTECTED_PROCESSES.has(proc)) {
+      return Promise.resolve({ success: false, error: `"${proc}" is a protected system process.` });
+    }
+  }
+
+  return run(cmd);
 }
 
 function run(command) {

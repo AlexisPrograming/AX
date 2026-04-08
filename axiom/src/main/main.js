@@ -49,8 +49,8 @@ function applyAutoLaunch(enabled) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 400,
-    height: 600,
+    width: 240,
+    height: 300,
     show: false,
     frame: false,
     alwaysOnTop: true,
@@ -66,12 +66,10 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // Raise to top when focused; step back when blurred (unless pinned)
+  // Raise to front when focused (keeps it above whatever was just clicked)
   mainWindow.on('focus', () => {
-    mainWindow.setAlwaysOnTop(true, 'floating');
-  });
-  mainWindow.on('blur', () => {
-    if (!windowPinned) mainWindow.setAlwaysOnTop(false);
+    mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
+    mainWindow.moveTop();
   });
 
   mainWindow.on('close', (e) => {
@@ -459,7 +457,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
 
   // ── Clipboard intent check ────────────────────────────────
   const clipboardReply = await handleClipboardIntent(message);
-  if (clipboardReply !== null) return clipboardReply;
+  if (clipboardReply !== null) return { speech: clipboardReply, needsReply: false };
 
   const result = await sendMessage(message);
 
@@ -471,7 +469,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
         mainWindow.webContents.send('brainstorm-start', mode);
       }
       lastAxiomResponse = result.speech;
-      return result.speech; // "Go for it. I'm listening..."
+      return { speech: result.speech, needsReply: false };
     }
 
     // Web search: speak the placeholder first, then fetch + summarize
@@ -482,10 +480,10 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
         const raw = await search(result.action.query, result.action.hint || 'general');
         const summary = await summarizeSearchResults(result.action.query, raw);
         lastAxiomResponse = summary;
-        return summary;
+        return { speech: summary, needsReply: false };
       } catch (err) {
         console.error('[AXIOM search]', err.message);
-        return "Hmm, I ran into an issue with the search. Check your Serper API key in .env.";
+        return { speech: "Hmm, I ran into an issue with the search. Check your Serper API key in .env.", needsReply: false };
       }
     }
 
@@ -495,12 +493,12 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
     if (!actionResult.success) {
       const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
       lastAxiomResponse = errReply;
-      return errReply;
+      return { speech: errReply, needsReply: false };
     }
   }
 
   lastAxiomResponse = result.speech;
-  return result.speech;
+  return { speech: result.speech, needsReply: result.needsReply || false };
 });
 
 ipcMain.handle('speak-text', async (_event, text) => {
@@ -543,7 +541,7 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
 
   // Clipboard intents take priority — e.g. "read this to me" may arrive here
   const clipboardReply = await handleClipboardIntent(text);
-  if (clipboardReply !== null) return clipboardReply;
+  if (clipboardReply !== null) return { speech: clipboardReply, needsReply: false };
 
   let b64 = base64;
   try {
@@ -557,11 +555,11 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
       if (!actionResult.success) {
         const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
         lastAxiomResponse = errReply;
-        return errReply;
+        return { speech: errReply, needsReply: false };
       }
     }
     lastAxiomResponse = result.speech;
-    return result.speech;
+    return { speech: result.speech, needsReply: result.needsReply || false };
   } finally {
     // Nothing is persisted — the base64 lives in memory only and is
     // released when this handler returns. Scrub the local reference.
@@ -622,7 +620,9 @@ ipcMain.on('window-minimize', () => {
 
 ipcMain.handle('toggle-pin', () => {
   windowPinned = !windowPinned;
-  mainWindow.setAlwaysOnTop(windowPinned, 'screen-saver');
+  // Pinned = screen-saver level (above full-screen apps too)
+  // Unpinned = floating (normal always-on-top, other normal windows can't cover it)
+  mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
   mainWindow.webContents.send('pin-changed', windowPinned);
   return windowPinned;
 });

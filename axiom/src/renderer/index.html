@@ -11,59 +11,25 @@
 
     <!-- Title bar (draggable) -->
     <div id="titlebar">
-      <div id="logo">
-        <span class="logo-bracket">[</span>
-        <span class="logo-text">AXIOM</span>
-        <span class="logo-bracket">]</span>
-      </div>
-      <span id="rec-dot" title="Recording"></span>
-      <button id="pin-btn" title="Pin on top">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="17" x2="12" y2="22"></line>
-          <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
-        </svg>
-      </button>
-      <button id="close-btn" title="Hide">&times;</button>
-    </div>
-
-    <!-- Waveform visualizer -->
-    <div id="waveform">
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-    </div>
-
-    <!-- Conversation log -->
-    <div id="conversation">
-      <div id="messages">
-        <div class="msg system">Press <kbd>Alt+Space</kbd> or tap the mic to begin.</div>
+      <span id="logo">AX</span>
+      <div id="titlebar-btns">
+        <button id="pin-btn" title="Pin on top">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="17" x2="12" y2="22"></line>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
+          </svg>
+        </button>
+        <button id="close-btn" title="Hide">&times;</button>
       </div>
     </div>
 
-    <!-- Mic button -->
-    <div id="mic-area">
-      <button id="mic-btn">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="1" width="6" height="12" rx="3"></rect>
-          <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
-          <line x1="12" y1="19" x2="12" y2="23"></line>
-          <line x1="8" y1="23" x2="16" y2="23"></line>
-        </svg>
-      </button>
+    <!-- Particle orb — click to talk -->
+    <div id="orb-area">
+      <canvas id="orb-canvas" width="210" height="210"></canvas>
     </div>
+
+    <!-- Last interaction subtitle (fades in/out) -->
+    <div id="subtitle"></div>
 
     <!-- Status bar -->
     <div id="statusbar">

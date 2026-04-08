@@ -1,18 +1,208 @@
-const messagesEl = document.getElementById('messages');
-const waveformEl = document.getElementById('waveform');
-const statusBar = document.getElementById('statusbar');
+// ── DOM refs ─────────────────────────────────────────────────
+const canvas     = document.getElementById('orb-canvas');
+const subtitleEl = document.getElementById('subtitle');
+const statusBar  = document.getElementById('statusbar');
 const statusText = document.getElementById('status-text');
-const micBtn = document.getElementById('mic-btn');
-const closeBtn = document.getElementById('close-btn');
-const pinBtn = document.getElementById('pin-btn');
-const recDot = document.getElementById('rec-dot');
+const pinBtn     = document.getElementById('pin-btn');
+const closeBtn   = document.getElementById('close-btn');
 
-let busy = false;
-let cancelled = false;
-let pendingScreenshot = null; // base64 PNG captured by the Alt+S hotkey, consumed by the next listen()
+// ── Particle Orb ─────────────────────────────────────────────
 
-// Screen-intent phrases — same regex list as brain.needsScreen so the renderer
-// can decide whether to capture before asking.
+class ParticleOrb {
+  constructor(cvs) {
+    this.cvs = cvs;
+    this.ctx = cvs.getContext('2d');
+    this.W   = cvs.width;
+    this.H   = cvs.height;
+    this.cx  = this.W / 2;
+    this.cy  = this.H / 2;
+
+    this.N          = 240;        // dot count
+    this.BASE_R     = 72;         // base sphere radius (px)
+    this.FOV        = 280;
+    this.rotY       = 0;
+    this.rotX       = 0.42;       // slight tilt
+    this.rotSpeed   = 0.004;
+    this.amplitude  = 0;          // smoothed 0–1
+    this.targetAmp  = 0;
+    this.state      = 'idle';
+    this.speakT     = 0;
+    this.rafId      = null;
+
+    // Fibonacci-lattice sphere points
+    const gr = (1 + Math.sqrt(5)) / 2;
+    this.pts = Array.from({ length: this.N }, (_, i) => {
+      const theta = Math.acos(1 - 2 * (i + 0.5) / this.N);
+      const phi   = 2 * Math.PI * i / gr;
+      return {
+        ox:    Math.sin(theta) * Math.cos(phi),
+        oy:    Math.sin(theta) * Math.sin(phi),
+        oz:    Math.cos(theta),
+        phase: Math.random() * Math.PI * 2,
+        freq:  0.7 + Math.random() * 0.6,
+      };
+    });
+  }
+
+  setState(s) {
+    this.state = s;
+    this.rotSpeed = { idle: 0.004, listening: 0.007, thinking: 0.014, speaking: 0.005 }[s] ?? 0.004;
+    if (s !== 'speaking') this.speakT = 0;
+  }
+
+  setAmplitude(a) { this.targetAmp = Math.min(1, Math.max(0, a)); }
+
+  start() {
+    let last = 0;
+    const loop = (t) => {
+      const dt = Math.min((t - last) / 1000, 0.05);
+      last = t;
+      this._update(dt);
+      this._draw();
+      this.rafId = requestAnimationFrame(loop);
+    };
+    this.rafId = requestAnimationFrame(loop);
+  }
+
+  stop() { if (this.rafId) cancelAnimationFrame(this.rafId); }
+
+  _update(dt) {
+    // Smooth amplitude
+    this.amplitude += (this.targetAmp - this.amplitude) * 10 * dt;
+
+    // Rotate
+    this.rotY += this.rotSpeed;
+
+    // Auto-generate target amplitude per state
+    const t = performance.now() / 1000;
+    if (this.state === 'idle') {
+      this.targetAmp = 0.03 + Math.sin(t * 0.7) * 0.02;
+    } else if (this.state === 'thinking') {
+      this.targetAmp = 0.12 + Math.abs(Math.sin(t * 3.5)) * 0.18;
+      this.rotY += this.rotSpeed * 0.4; // extra spin
+    } else if (this.state === 'speaking') {
+      this.speakT += dt;
+      // Overlapping sinusoids mimic speech cadence
+      this.targetAmp =
+        Math.abs(Math.sin(this.speakT * 8.3))  * 0.28 +
+        Math.abs(Math.sin(this.speakT * 13.7)) * 0.18 +
+        Math.abs(Math.sin(this.speakT * 5.1))  * 0.14 +
+        0.08;
+    }
+    // 'listening' → amplitude set externally from mic RMS
+  }
+
+  _draw() {
+    const { ctx, cx, cy, W, H, amplitude: amp, rotY, rotX, FOV, BASE_R } = this;
+    ctx.clearRect(0, 0, W, H);
+
+    const t   = performance.now() / 1000;
+    const r   = BASE_R * (1 + amp * 0.38);
+    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+    const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+
+    // Project + displace all points
+    const proj = this.pts.map((p) => {
+      let disp = 1;
+      if (this.state === 'speaking' || this.state === 'listening') {
+        disp = 1 + Math.sin(t * p.freq * (this.state === 'speaking' ? 9 : 5) + p.phase) * amp * 0.45;
+      } else if (this.state === 'thinking') {
+        disp = 1 + Math.sin(t * p.freq * 4 + p.phase) * amp * 0.3;
+      }
+
+      const x = p.ox * disp, y = p.oy * disp, z = p.oz * disp;
+
+      // Rotate Y
+      const x1 = x * cosY - z * sinY;
+      const z1 = x * sinY + z * cosY;
+      // Rotate X
+      const y2 = y * cosX - z1 * sinX;
+      const z2 = y * sinX + z1 * cosX;
+
+      const scale = FOV / (FOV + z2 * r);
+      return {
+        x: cx + x1 * r * scale,
+        y: cy + y2 * r * scale,
+        depth: (z2 + 1) / 2,
+      };
+    });
+
+    // Back-to-front sort
+    proj.sort((a, b) => a.depth - b.depth);
+
+    // Draw dots
+    proj.forEach(({ x, y, depth }) => {
+      const alpha   = 0.12 + depth * 0.88;
+      const dotSize = 0.7 + depth * 1.5 + amp * 1.2;
+      ctx.beginPath();
+      ctx.arc(x, y, dotSize, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(29,158,117,${alpha.toFixed(2)})`;
+      ctx.fill();
+    });
+
+    // Core glow when active
+    if (amp > 0.06) {
+      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7);
+      grd.addColorStop(0, `rgba(29,158,117,${(amp * 0.1).toFixed(3)})`);
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+}
+
+const orb = new ParticleOrb(canvas);
+orb.start();
+
+// ── State management ─────────────────────────────────────────
+
+function setState(state) {
+  statusBar.className = state === 'ready' ? '' : state;
+  orb.setState(state === 'ready' ? 'idle' : state);
+
+  const labels = {
+    ready:     'Ready',
+    listening: 'Listening',
+    thinking:  'Thinking',
+    speaking:  'Speaking',
+    error:     'Error',
+  };
+  statusText.textContent = labels[state] ?? 'Ready';
+}
+
+// ── Subtitle (fading last-message) ───────────────────────────
+
+let subtitleTimer = null;
+function showSubtitle(text) {
+  if (!text) return;
+  const preview = text.length > 100 ? text.slice(0, 100) + '…' : text;
+  subtitleEl.textContent = preview;
+  subtitleEl.classList.add('visible');
+  if (subtitleTimer) clearTimeout(subtitleTimer);
+  subtitleTimer = setTimeout(() => subtitleEl.classList.remove('visible'), 5000);
+}
+
+// ── Audio recording state ─────────────────────────────────────
+
+let busy         = false;
+let cancelled    = false;
+let pendingShot  = null;
+let mediaRecorder = null;
+let mediaStream   = null;
+let audioCtx      = null;
+let analyser      = null;
+let sourceNode    = null;
+let rafId         = null;
+let audioChunks   = [];
+
+const SILENCE_MS        = 1500;
+const SILENCE_THRESHOLD = 0.012;
+const MIN_SPEECH_MS     = 400;
+const BS_SILENCE_MS     = 5000;
+const BS_MAX_MS         = 180000;
+const BS_MIN_MS         = 1000;
+
+// Screen-intent mirror (same as brain.js)
 const SCREEN_INTENT = [
   /\bwhat'?s on (my|the) screen\b/i,
   /\blook at (this|my screen|the screen)\b/i,
@@ -26,142 +216,43 @@ const SCREEN_INTENT = [
   /\bhelp me (fix|debug) this\b/i,
   /\bon my screen\b/i,
 ];
-function needsScreen(text) {
-  return !!text && SCREEN_INTENT.some((re) => re.test(text));
-}
-
-// ── Whisper recording state ──────────────────────────────
-let mediaRecorder = null;
-let mediaStream = null;
-let audioCtx = null;
-let analyser = null;
-let sourceNode = null;
-let rafId = null;
-let audioChunks = [];
-
-const SILENCE_MS = 1500;
-const SILENCE_THRESHOLD = 0.012;
-const MIN_SPEECH_MS = 400;
-
-// Brainstorm mode constants
-const BS_SILENCE_MS  = 5000;   // 5s silence ends brainstorm
-const BS_MAX_MS      = 180000; // 3 minute hard cap
-const BS_MIN_MS      = 1000;
+function needsScreen(t) { return !!t && SCREEN_INTENT.some(re => re.test(t)); }
 
 function stopRecorder() {
-  if (rafId) cancelAnimationFrame(rafId);
-  rafId = null;
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
   try { sourceNode && sourceNode.disconnect(); } catch {}
-  try { analyser && analyser.disconnect(); } catch {}
-  try { audioCtx && audioCtx.close(); } catch {}
+  try { analyser  && analyser.disconnect();  } catch {}
+  try { audioCtx  && audioCtx.close();       } catch {}
   audioCtx = analyser = sourceNode = null;
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch {}
   }
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-  }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  orb.setAmplitude(0);
 }
 
 function recordUntilSilence() {
   return new Promise(async (resolve, reject) => {
-    try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      return reject(err);
-    }
+    try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (err) { return reject(err); }
 
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
-    audioChunks = [];
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(audioChunks, { type: mime });
-      const buf = await blob.arrayBuffer();
-      resolve(buf);
-    };
-
-    mediaRecorder.onerror = (e) => reject(e.error || new Error('recorder error'));
-    mediaRecorder.start(250);
-
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
-    sourceNode.connect(analyser);
-
-    const data = new Float32Array(analyser.fftSize);
-    const startedAt = performance.now();
-    let lastVoiceAt = performance.now();
-    let everSpoke = false;
-
-    const tick = () => {
-      if (cancelled) {
-        stopRecorder();
-        return;
-      }
-      analyser.getFloatTimeDomainData(data);
-      let sumSq = 0;
-      for (let i = 0; i < data.length; i++) sumSq += data[i] * data[i];
-      const rms = Math.sqrt(sumSq / data.length);
-
-      if (rms > SILENCE_THRESHOLD) {
-        lastVoiceAt = performance.now();
-        if (performance.now() - startedAt > MIN_SPEECH_MS) everSpoke = true;
-      }
-
-      const silentFor = performance.now() - lastVoiceAt;
-      const totalFor = performance.now() - startedAt;
-
-      // Hard cap at 30s; or stop after silence (only if we heard speech, or after 6s of nothing)
-      if (totalFor > 30000 || (silentFor > SILENCE_MS && (everSpoke || totalFor > 6000))) {
-        stopRecorder();
-        return;
-      }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-  });
-}
-
-// Extended recorder for brainstorm mode (longer silence + max duration)
-function recordBrainstormAudio() {
-  return new Promise(async (resolve, reject) => {
-    try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) { return reject(err); }
-
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/webm';
-
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
     audioChunks = [];
     mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
     mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(audioChunks, { type: mime });
-      resolve(await blob.arrayBuffer());
-    };
+    mediaRecorder.onstop = async () => resolve(await new Blob(audioChunks, { type: mime }).arrayBuffer());
     mediaRecorder.onerror = (e) => reject(e.error || new Error('recorder error'));
     mediaRecorder.start(250);
 
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
     sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-    analyser = audioCtx.createAnalyser();
+    analyser   = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     sourceNode.connect(analyser);
-
     const data = new Float32Array(analyser.fftSize);
     const startedAt = performance.now();
     let lastVoiceAt = performance.now();
-    let everSpoke = false;
+    let everSpoke   = false;
 
     const tick = () => {
       if (cancelled) { stopRecorder(); return; }
@@ -170,15 +261,16 @@ function recordBrainstormAudio() {
       for (let i = 0; i < data.length; i++) sumSq += data[i] * data[i];
       const rms = Math.sqrt(sumSq / data.length);
 
+      // Drive orb with mic amplitude
+      orb.setAmplitude(rms * 12);
+
       if (rms > SILENCE_THRESHOLD) {
         lastVoiceAt = performance.now();
-        if (performance.now() - startedAt > BS_MIN_MS) everSpoke = true;
+        if (performance.now() - startedAt > MIN_SPEECH_MS) everSpoke = true;
       }
-
-      const silentFor = performance.now() - lastVoiceAt;
-      const totalFor  = performance.now() - startedAt;
-
-      if (totalFor > BS_MAX_MS || (silentFor > BS_SILENCE_MS && (everSpoke || totalFor > 10000))) {
+      const silent = performance.now() - lastVoiceAt;
+      const total  = performance.now() - startedAt;
+      if (total > 30000 || (silent > SILENCE_MS && (everSpoke || total > 6000))) {
         stopRecorder(); return;
       }
       rafId = requestAnimationFrame(tick);
@@ -187,128 +279,52 @@ function recordBrainstormAudio() {
   });
 }
 
-// ── Brainstorm listen pipeline ───────────────────────────────
+function recordBrainstormAudio() {
+  return new Promise(async (resolve, reject) => {
+    try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (err) { return reject(err); }
 
-let brainstormMode = null;
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
+    mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = async () => resolve(await new Blob(audioChunks, { type: mime }).arrayBuffer());
+    mediaRecorder.onerror = (e) => reject(e.error || new Error('recorder error'));
+    mediaRecorder.start(250);
 
-async function listenBrainstorm(mode) {
-  if (busy) return;
-  busy = true;
-  cancelled = false;
-  brainstormMode = mode || 'general';
+    audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    analyser   = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    sourceNode.connect(analyser);
+    const data = new Float32Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let lastVoiceAt = performance.now();
+    let everSpoke   = false;
 
-  // Override status text for brainstorm
-  waveformEl.className = '';
-  statusBar.className = 'listening';
-  waveformEl.classList.add('waveform-active');
-  micBtn.classList.add('listening', 'cancel');
-  micBtn.innerHTML = STOP_ICON;
-  statusText.textContent = 'Brainstorm — speak freely, 5s silence to finish';
-  if (recDot) recDot.classList.add('recording');
-
-  try {
-    const audioBuffer = await recordBrainstormAudio();
-    if (cancelled) return;
-
-    setState('thinking');
-    statusText.textContent = 'Organizing your thoughts...';
-
-    const result = await window.axiom.processBrainstorm(audioBuffer, brainstormMode);
-    if (cancelled) return;
-
-    addMessage('assistant', result);
-    setState('speaking');
-    await window.axiom.speakText(result);
-
-    if (cancelled) return;
-    setState('ready');
-  } catch (err) {
-    if (cancelled) return;
-    addMessage('system', err.message || 'Brainstorm failed.');
-    setState('error');
-    setTimeout(() => setState('ready'), 3000);
-  }
-
-  busy = false;
-  brainstormMode = null;
+    const tick = () => {
+      if (cancelled) { stopRecorder(); return; }
+      analyser.getFloatTimeDomainData(data);
+      let sumSq = 0;
+      for (let i = 0; i < data.length; i++) sumSq += data[i] * data[i];
+      const rms = Math.sqrt(sumSq / data.length);
+      orb.setAmplitude(rms * 12);
+      if (rms > SILENCE_THRESHOLD) {
+        lastVoiceAt = performance.now();
+        if (performance.now() - startedAt > BS_MIN_MS) everSpoke = true;
+      }
+      const silent = performance.now() - lastVoiceAt;
+      const total  = performance.now() - startedAt;
+      if (total > BS_MAX_MS || (silent > BS_SILENCE_MS && (everSpoke || total > 10000))) {
+        stopRecorder(); return;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  });
 }
 
-const MIC_ICON = `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="9" y="1" width="6" height="12" rx="3"></rect>
-  <path d="M19 10v1a7 7 0 0 1-14 0v-1"></path>
-  <line x1="12" y1="19" x2="12" y2="23"></line>
-  <line x1="8" y1="23" x2="16" y2="23"></line>
-</svg>`;
-
-const STOP_ICON = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="6" y1="6" x2="18" y2="18"></line>
-  <line x1="6" y1="18" x2="18" y2="6"></line>
-</svg>`;
-
-// ── State Management ─────────────────────────────────────
-
-function setState(state) {
-  waveformEl.className = '';
-  statusBar.className = '';
-  micBtn.classList.remove('listening', 'cancel');
-  if (recDot) recDot.classList.toggle('recording', state === 'listening');
-
-  switch (state) {
-    case 'listening':
-      waveformEl.classList.add('waveform-active');
-      statusBar.classList.add('listening');
-      micBtn.classList.add('listening', 'cancel');
-      micBtn.innerHTML = STOP_ICON;
-      statusText.textContent = 'Listening — tap to cancel';
-      break;
-    case 'thinking':
-      waveformEl.classList.add('waveform-thinking');
-      statusBar.classList.add('thinking');
-      micBtn.classList.add('cancel');
-      micBtn.innerHTML = STOP_ICON;
-      statusText.textContent = 'Thinking';
-      break;
-    case 'speaking':
-      waveformEl.classList.add('waveform-active');
-      statusBar.classList.add('speaking');
-      micBtn.classList.add('cancel');
-      micBtn.innerHTML = STOP_ICON;
-      statusText.textContent = 'Speaking — tap to stop';
-      break;
-    case 'error':
-      statusBar.classList.add('error');
-      micBtn.innerHTML = MIC_ICON;
-      statusText.textContent = 'Error';
-      break;
-    default:
-      micBtn.innerHTML = MIC_ICON;
-      statusText.textContent = 'Ready';
-  }
-}
-
-// ── Messages ─────────────────────────────────────────────
-
-function addMessage(role, text) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-
-  if (role === 'user' || role === 'assistant') {
-    const label = document.createElement('div');
-    label.className = 'msg-label';
-    label.textContent = role === 'user' ? 'You' : 'AXIOM';
-    div.appendChild(label);
-  }
-
-  const body = document.createElement('div');
-  body.className = 'msg-body';
-  body.textContent = text;
-  div.appendChild(body);
-
-  messagesEl.appendChild(div);
-  messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-}
-
-// ── Cancel ───────────────────────────────────────────────
+// ── Cancel ────────────────────────────────────────────────────
 
 function cancelAll() {
   cancelled = true;
@@ -318,7 +334,41 @@ function cancelAll() {
   setState('ready');
 }
 
-// ── Listen → Think → Speak pipeline ─────────────────────
+// ── Brainstorm pipeline ───────────────────────────────────────
+
+let brainstormMode = null;
+
+async function listenBrainstorm(mode) {
+  if (busy) return;
+  busy = true;
+  cancelled = false;
+  brainstormMode = mode || 'general';
+  setState('listening');
+  statusText.textContent = 'Brainstorm — 5s silence to finish';
+
+  try {
+    const buf = await recordBrainstormAudio();
+    if (cancelled) return;
+    setState('thinking');
+    const result = await window.axiom.processBrainstorm(buf, brainstormMode);
+    if (cancelled) return;
+    showSubtitle(result);
+    setState('speaking');
+    await window.axiom.speakText(result);
+    if (cancelled) return;
+    setState('ready');
+  } catch (err) {
+    if (cancelled) return;
+    showSubtitle(err.message || 'Brainstorm failed.');
+    setState('error');
+    setTimeout(() => setState('ready'), 3000);
+  }
+
+  busy = false;
+  brainstormMode = null;
+}
+
+// ── Main listen pipeline ──────────────────────────────────────
 
 async function listen() {
   if (busy) return;
@@ -327,72 +377,64 @@ async function listen() {
   setState('listening');
 
   try {
-    const audioBuffer = await recordUntilSilence();
-
+    const buf = await recordUntilSilence();
     if (cancelled) return;
 
     setState('thinking');
-    const result = await window.axiom.transcribeAudio(audioBuffer);
-
+    const result = await window.axiom.transcribeAudio(buf);
     if (cancelled) return;
 
-    if (result.error === 'no-speech') {
-      addMessage('system', 'No speech detected. Tap the mic to try again.');
+    if (result.error === 'no-speech' || !result.text?.trim()) {
       setState('ready');
       busy = false;
       return;
     }
-
     if (result.error) {
-      addMessage('system', `Whisper error: ${result.error}`);
+      showSubtitle(`Transcription error: ${result.error}`);
       setState('error');
       setTimeout(() => setState('ready'), 3000);
       busy = false;
       return;
     }
 
-    if (!result.text || !result.text.trim()) {
-      addMessage('system', 'No speech detected. Tap the mic to try again.');
-      setState('ready');
-      busy = false;
-      return;
-    }
+    showSubtitle(result.text);
 
-    addMessage('user', result.text);
-    setState('thinking');
-
-    // Decide whether this turn needs vision:
-    //  - Alt+S already pre-captured a screenshot → use it
-    //  - Or the phrase triggers the screen intent → capture now
-    let reply;
-    if (pendingScreenshot) {
-      const shot = pendingScreenshot;
-      pendingScreenshot = null;
-      reply = await window.axiom.sendToClaudeWithScreen(result.text, shot);
+    let response;
+    if (pendingShot) {
+      const shot = pendingShot; pendingShot = null;
+      response = await window.axiom.sendToClaudeWithScreen(result.text, shot);
     } else if (needsScreen(result.text)) {
       const cap = await window.axiom.captureScreen();
-      if (cap && cap.ok) {
-        reply = await window.axiom.sendToClaudeWithScreen(result.text, cap.base64);
-      } else {
-        reply = await window.axiom.sendToClaude(result.text);
-      }
+      response = (cap && cap.ok)
+        ? await window.axiom.sendToClaudeWithScreen(result.text, cap.base64)
+        : await window.axiom.sendToClaude(result.text);
     } else {
-      reply = await window.axiom.sendToClaude(result.text);
+      response = await window.axiom.sendToClaude(result.text);
     }
 
+    // Support both legacy string replies and new { speech, needsReply } objects
+    const reply      = typeof response === 'string' ? response : response.speech;
+    const needsReply = typeof response === 'object' && response.needsReply;
+
     if (cancelled) return;
-
-    addMessage('assistant', reply);
-
+    showSubtitle(reply);
     setState('speaking');
     await window.axiom.speakText(reply);
-
     if (cancelled) return;
+
+    // Auto-reopen mic if AXIOM asked a question or needs more input
+    if (needsReply) {
+      busy = false;
+      setState('listening');
+      statusText.textContent = 'Listening for reply…';
+      await new Promise(r => setTimeout(r, 350));
+      if (!cancelled) { listen(); return; }
+    }
 
     setState('ready');
   } catch (err) {
     if (cancelled) return;
-    addMessage('system', err.message || 'Something went wrong.');
+    showSubtitle(err.message || 'Something went wrong.');
     setState('error');
     setTimeout(() => setState('ready'), 3000);
   }
@@ -400,76 +442,54 @@ async function listen() {
   busy = false;
 }
 
-// ── Event Listeners ──────────────────────────────────────
+// ── Interactions ──────────────────────────────────────────────
 
-micBtn.addEventListener('click', () => {
+canvas.addEventListener('click', () => {
   window.axiom.userActive && window.axiom.userActive();
-  if (busy) {
-    cancelAll();
-  } else {
-    listen();
-  }
+  if (busy) cancelAll(); else listen();
 });
 
-closeBtn.addEventListener('click', () => {
-  cancelAll();
-  window.axiom.minimize();
-});
+closeBtn.addEventListener('click', () => { cancelAll(); window.axiom.minimize(); });
 
 pinBtn.addEventListener('click', () => {
   window.axiom.togglePin().then((pinned) => {
     pinBtn.classList.toggle('pinned', pinned);
-    pinBtn.title = pinned ? 'Unpin (currently always on top)' : 'Pin on top';
+    pinBtn.title = pinned ? 'Unpin' : 'Pin on top';
   });
 });
 
 if (window.axiom.onPinChanged) {
-  window.axiom.onPinChanged((pinned) => {
-    pinBtn.classList.toggle('pinned', pinned);
-  });
+  window.axiom.onPinChanged((pinned) => pinBtn.classList.toggle('pinned', pinned));
 }
 
-// ── Init ─────────────────────────────────────────────────
+// ── Platform events ───────────────────────────────────────────
 
 setState('ready');
 
-// Wake word "Hey AX" — auto-start the listening pipeline
 if (window.axiom.onWakeWord) {
-  window.axiom.onWakeWord(() => {
-    if (!busy) listen();
-  });
+  window.axiom.onWakeWord(() => { if (!busy) listen(); });
 }
 
-// Alt+S hotkey — screenshot already captured in main, stash it and start listening
 if (window.axiom.onScreenHotkey) {
   window.axiom.onScreenHotkey((base64) => {
-    pendingScreenshot = base64 || null;
-    addMessage('system', 'Screenshot captured. Ask me about it.');
+    pendingShot = base64 || null;
+    showSubtitle('Screenshot captured — ask me about it.');
     if (!busy) listen();
   });
 }
 
-// Brainstorm mode — extended listening triggered by brain.js action
 if (window.axiom.onBrainstormStart) {
-  window.axiom.onBrainstormStart((mode) => {
-    if (!busy) listenBrainstorm(mode);
-  });
+  window.axiom.onBrainstormStart((mode) => { if (!busy) listenBrainstorm(mode); });
 }
 
-// Proactive messages from AXIOM (silence check-ins, break nudges, etc.)
 if (window.axiom.onProactive) {
-  window.axiom.onProactive((text) => {
-    addMessage('assistant', text);
-  });
+  window.axiom.onProactive((text) => showSubtitle(text));
 }
 
-// Daily briefing arrives from main on startup
 if (window.axiom.onBriefing) {
   window.axiom.onBriefing((text) => {
-    addMessage('assistant', text);
+    showSubtitle(text);
     setState('speaking');
-    // The main process is already speaking via the speaker service;
-    // we just reflect the state here.
     setTimeout(() => setState('ready'), Math.min(15000, 2000 + text.length * 60));
   });
 }
