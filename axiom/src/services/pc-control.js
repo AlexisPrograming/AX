@@ -123,6 +123,24 @@ async function executeAction(action) {
     case 'reminder':
       return setReminder(action.message, action.minutes);
 
+    case 'send_keys':
+      return sendKeys(action.keys);
+
+    case 'mouse_click':
+      return require('./mouse-control.js').click(action.x, action.y, action.scaleFactor || 1);
+
+    case 'mouse_right_click':
+      return require('./mouse-control.js').rightClick(action.x, action.y, action.scaleFactor || 1);
+
+    case 'mouse_double_click':
+      return require('./mouse-control.js').doubleClick(action.x, action.y, action.scaleFactor || 1);
+
+    case 'mouse_scroll':
+      return require('./mouse-control.js').scroll(action.x, action.y, action.direction || 'down', action.amount || 3, action.scaleFactor || 1);
+
+    case 'mouse_move':
+      return require('./mouse-control.js').moveTo(action.x, action.y, action.scaleFactor || 1);
+
     case 'run_command':
       return runSafe(action.command);
 
@@ -342,6 +360,42 @@ function runSafe(command) {
   }
 
   return run(cmd);
+}
+
+function sendKeys(keys) {
+  if (!keys) return Promise.resolve({ success: false, error: 'No keys specified' });
+
+  // Allowlist: only safe SendKeys patterns (no arbitrary shell injection)
+  const safe = /^[\^%+~{}\[\]()\w\s;:.,!@#$*-]+$/;
+  if (!safe.test(keys)) {
+    return Promise.resolve({ success: false, error: `Invalid key sequence: ${keys}` });
+  }
+
+  const { execFile } = require('child_process');
+  const fs   = require('fs');
+  const os   = require('os');
+  const path = require('path');
+
+  const tmp    = path.join(os.tmpdir(), `axiom-keys-${Date.now()}.ps1`);
+  const script = [
+    `Add-Type -AssemblyName System.Windows.Forms`,
+    `[System.Windows.Forms.SendKeys]::SendWait('${keys.replace(/'/g, "''")}')`,
+  ].join('\r\n');
+
+  return new Promise((resolve) => {
+    fs.writeFile(tmp, script, 'utf8', (writeErr) => {
+      if (writeErr) return resolve({ success: false, error: writeErr.message });
+      execFile(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', tmp],
+        { windowsHide: true },
+        (err) => {
+          fs.unlink(tmp, () => {});
+          resolve(err ? { success: false, error: err.message } : { success: true });
+        }
+      );
+    });
+  });
 }
 
 function run(command) {

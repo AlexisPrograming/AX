@@ -9,6 +9,7 @@ const proactive       = require('../services/proactive.js');
 const pomodoro        = require('../services/pomodoro.js');
 const terminalWatcher = require('../services/terminal-watcher.js');
 const clipboardService = require('../services/clipboard.js');
+const usageTracker    = require('../services/usage-tracker.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -249,6 +250,9 @@ app.whenReady().then(() => {
   // Offline wake word ("Hey AX")
   startWakeWord();
 
+  // Usage tracker — starts logging active window every 60 s
+  usageTracker.start();
+
   // Proactive companion loop
   try {
     const { speak } = require('../services/speaker.js');
@@ -369,11 +373,58 @@ app.on('will-quit', async () => {
   proactive.stop();
   pomodoro.shutdown();
   terminalWatcher.shutdown();
+  usageTracker.stop();
 });
 
 app.on('window-all-closed', (e) => {
   e.preventDefault();
 });
+
+// ── Type text into active window ──────────────────────────────
+// Defocuses AXIOM so the target window regains focus, then pastes via clipboard.
+async function typeTextIntoActiveWindow(text) {
+  if (!text) return;
+
+  // Temporarily step back so the previous window can reclaim focus
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.blur();
+  await new Promise(r => setTimeout(r, 450));
+
+  const { exec: execCmd } = require('child_process');
+  const tmpFile = require('path').join(require('os').tmpdir(), `axiom-type-${Date.now()}.ps1`);
+
+  // Use a here-string so no shell escaping is needed for the text content
+  const safeText = text.replace(/`/g, '``');
+  const script = [
+    `$text = @'`,
+    safeText,
+    `'@`,
+    `Add-Type -AssemblyName System.Windows.Forms`,
+    `$prev = [System.Windows.Forms.Clipboard]::GetText()`,
+    `[System.Windows.Forms.Clipboard]::SetText($text)`,
+    `Start-Sleep -Milliseconds 80`,
+    `[System.Windows.Forms.SendKeys]::SendWait('^v')`,
+    `Start-Sleep -Milliseconds 250`,
+    `if ($prev) { [System.Windows.Forms.Clipboard]::SetText($prev) } else { [System.Windows.Forms.Clipboard]::Clear() }`,
+  ].join('\r\n');
+
+  await new Promise((resolve) => {
+    require('fs').writeFile(tmpFile, script, 'utf8', (writeErr) => {
+      if (writeErr) { resolve(); return; }
+      execCmd(
+        `powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${tmpFile}"`,
+        { windowsHide: true },
+        () => {
+          require('fs').unlink(tmpFile, () => {});
+          resolve();
+        }
+      );
+    });
+  });
+
+  // Restore always-on-top
+  mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
+}
 
 // ── Clipboard intent handler ──────────────────────────────────
 // Returns a reply string if the message is a clipboard command, or null to fall through.
@@ -487,8 +538,37 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       }
     }
 
+    // Type text or send keys into previously focused window
+    if (result.action.type === 'type_text') {
+      await typeTextIntoActiveWindow(result.action.text || '');
+      lastAxiomResponse = result.speech;
+      return { speech: result.speech, needsReply: result.needsReply || false };
+    }
+
+    if (result.action.type === 'send_keys') {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.blur();
+      await new Promise(r => setTimeout(r, 350));
+      // fall through to executeAction which calls sendKeys
+    }
+
+    // Mouse actions: inject scaleFactor and defocus AXIOM window first
+    const MOUSE_ACTIONS = new Set(['mouse_click','mouse_right_click','mouse_double_click','mouse_scroll','mouse_move']);
+    if (MOUSE_ACTIONS.has(result.action.type)) {
+      const { scaleFactor } = screen.getPrimaryDisplay();
+      result.action.scaleFactor = scaleFactor;
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.blur();
+      await new Promise(r => setTimeout(r, 200));
+    }
+
     const actionResult = await executeAction(result.action);
     console.log('[AXIOM action]', result.action.type, actionResult);
+
+    // Restore always-on-top after key-sending or mouse actions
+    if (result.action.type === 'send_keys' || MOUSE_ACTIONS.has(result.action.type)) {
+      mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
+    }
 
     if (!actionResult.success) {
       const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
@@ -549,8 +629,21 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
     const result = await sendMessageWithImage(text, b64);
 
     if (result.action) {
+      const MOUSE_ACTIONS_SCREEN = new Set(['mouse_click','mouse_right_click','mouse_double_click','mouse_scroll','mouse_move']);
+      if (MOUSE_ACTIONS_SCREEN.has(result.action.type)) {
+        const { scaleFactor } = screen.getPrimaryDisplay();
+        result.action.scaleFactor = scaleFactor;
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.blur();
+        await new Promise(r => setTimeout(r, 200));
+      }
+
       const actionResult = await executeAction(result.action);
       console.log('[AXIOM action]', result.action.type, actionResult);
+
+      if (MOUSE_ACTIONS_SCREEN.has(result.action.type)) {
+        mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
+      }
 
       if (!actionResult.success) {
         const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;

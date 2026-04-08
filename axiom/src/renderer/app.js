@@ -215,6 +215,12 @@ const SCREEN_INTENT = [
   /\bwhat does (this|it) say\b/i,
   /\bhelp me (fix|debug) this\b/i,
   /\bon my screen\b/i,
+  /\bclick (this|that|it|the|here|there|play|pause|on)\b/i,
+  /\bclick (on )?(?!.*\bapp\b)/i,
+  /\bright.?click\b/i,
+  /\bdouble.?click\b/i,
+  /\bscroll (down|up|left|right)\b/i,
+  /\bscroll (a )?(little|bit|lot)\b/i,
 ];
 function needsScreen(t) { return !!t && SCREEN_INTENT.some(re => re.test(t)); }
 
