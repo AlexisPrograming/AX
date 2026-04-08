@@ -27,7 +27,10 @@ const APP_MAP = {
   'explorer':       'explorer',
   'files':          'explorer',
   'file explorer':  'explorer',
-  'discord':        'start discord',
+  'discord':        'powershell -NoProfile -WindowStyle Hidden -Command "$d=Get-ChildItem \\"$env:LOCALAPPDATA\\Discord\\" -Filter Discord.exe -Recurse -EA SilentlyContinue|Sort-Object LastWriteTime -Desc|Select-Object -First 1;if($d){Start-Process $d.FullName}else{Start-Process discord}"',
+  'valorant':       'powershell -NoProfile -WindowStyle Hidden -Command "$r=\'C:\\Riot Games\\Riot Client\\RiotClientServices.exe\';if(Test-Path $r){Start-Process $r \'--launch-product=valorant --launch-patchline=live\'}else{Start-Process valorant}"',
+  'riot':           'powershell -NoProfile -WindowStyle Hidden -Command "Start-Process \'C:\\Riot Games\\Riot Client\\RiotClientServices.exe\' -ErrorAction SilentlyContinue"',
+  'riot client':    'powershell -NoProfile -WindowStyle Hidden -Command "Start-Process \'C:\\Riot Games\\Riot Client\\RiotClientServices.exe\' -ErrorAction SilentlyContinue"',
   'slack':          'start slack',
   'teams':          'start msteams',
   'microsoft teams': 'start msteams',
@@ -175,6 +178,9 @@ const CLOSE_MAP = {
   'edge':         'msedge.exe',
   'spotify':      'Spotify.exe',
   'discord':      'Discord.exe',
+  'valorant':     'VALORANT-Win64-Shipping.exe',
+  'riot':         'RiotClientServices.exe',
+  'riot client':  'RiotClientServices.exe',
   'slack':        'slack.exe',
   'teams':        'Teams.exe',
   'vscode':       'Code.exe',
@@ -302,13 +308,45 @@ function systemPower(mode, delaySec) {
 }
 
 function adjustVolume(level) {
-  // Use PowerShell to set system volume (0-100)
-  const vol = Math.max(0, Math.min(100, parseInt(level) || 50));
-  const ps = `(New-Object -ComObject WScript.Shell).SendKeys([char]173); `
-    + `$vol = [Math]::Round(${vol} * 655.35); `
-    + `Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class Vol { [DllImport("winmm.dll")] public static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume); }'; `
-    + `[Vol]::waveOutSetVolume([IntPtr]::Zero, (${vol} * 655 + (${vol} * 655 -shl 16)))`;
-  return run(`powershell -NoProfile -Command "${ps}"`);
+  const volPct = Math.max(0, Math.min(100, parseInt(level) || 50));
+  const os   = require('os');
+  const fs   = require('fs');
+  const path = require('path');
+
+  // Write a temp .ps1 file so there are zero quote-escaping issues.
+  // The C# snippet needs "using System;" for IntPtr to resolve.
+  const script = `
+Add-Type -Language CSharp -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class AudioHelper {
+    [DllImport("winmm.dll")]
+    public static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume);
+    public static void SetVolume(int percent) {
+        uint raw = (uint)(percent * 0xFFFF / 100);
+        uint vol = raw | (raw << 16);
+        waveOutSetVolume(IntPtr.Zero, vol);
+    }
+}
+"@
+[AudioHelper]::SetVolume(${volPct})
+`.trim();
+
+  const tmpFile = path.join(os.tmpdir(), `axiom-vol-${Date.now()}.ps1`);
+  fs.writeFileSync(tmpFile, script, 'utf8');
+
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    exec(
+      `powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${tmpFile}"`,
+      { windowsHide: true },
+      (err) => {
+        fs.unlink(tmpFile, () => {});
+        if (err) resolve({ success: false, error: err.message });
+        else resolve({ success: true });
+      }
+    );
+  });
 }
 
 function setReminder(message, minutes) {

@@ -58,10 +58,13 @@ function createWindow() {
     resizable: false,
     skipTaskbar: true,
     transparent: true,
+    // Reduces DWM compositing work — browser still composites internally
+    backgroundThrottling: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
@@ -71,6 +74,21 @@ function createWindow() {
   mainWindow.on('focus', () => {
     mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
     mainWindow.moveTop();
+  });
+
+  // Pause orb animation while dragging so the GPU isn't fighting two jobs at once
+  let moveThrottle = null;
+  mainWindow.on('will-move', () => {
+    mainWindow.webContents.send('window-moving', true);
+    clearTimeout(moveThrottle);
+  });
+  mainWindow.on('moved', () => {
+    // Small delay so the window has fully settled before resuming animation
+    moveThrottle = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('window-moving', false);
+      }
+    }, 80);
   });
 
   mainWindow.on('close', (e) => {
@@ -666,7 +684,7 @@ ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
       return { error: 'no-speech' };
     }
     const buffer = Buffer.from(arrayBuffer);
-    const file = await toFile(buffer, 'audio.webm', { type: 'audio/webm' });
+    const file = await toFile(buffer, 'audio.wav', { type: 'audio/wav' });
 
     const result = await getOpenAI().audio.transcriptions.create({
       file,
@@ -694,7 +712,7 @@ ipcMain.handle('process-brainstorm', async (_event, { arrayBuffer, mode }) => {
     }
 
     const buffer = Buffer.from(arrayBuffer);
-    const file   = await toFile(buffer, 'audio.webm', { type: 'audio/webm' });
+    const file   = await toFile(buffer, 'audio.wav', { type: 'audio/wav' });
     const result = await getOpenAI().audio.transcriptions.create({ file, model: 'whisper-1' });
     const text   = (result.text || '').trim();
 

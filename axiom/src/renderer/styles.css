@@ -88,6 +88,9 @@ body {
 #orb-canvas {
   cursor: pointer;
   display: block;
+  /* Force own GPU compositing layer — prevents transparent-window repaint overhead */
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 /* ── Subtitle ────────────────────────────────────────────────── */

@@ -52,9 +52,21 @@ class ParticleOrb {
 
   setAmplitude(a) { this.targetAmp = Math.min(1, Math.max(0, a)); }
 
+  setPaused(p) {
+    this.paused = p;
+    // Resume immediately — the loop checks this flag each frame
+    if (!p && !this.rafId) this.start();
+  }
+
   start() {
+    this.paused = false;
     let last = 0;
     const loop = (t) => {
+      if (this.paused) {
+        // While dragging: stop requesting frames, draw one frozen frame
+        this.rafId = null;
+        return;
+      }
       const dt = Math.min((t - last) / 1000, 0.05);
       last = t;
       this._update(dt);
@@ -64,7 +76,7 @@ class ParticleOrb {
     this.rafId = requestAnimationFrame(loop);
   }
 
-  stop() { if (this.rafId) cancelAnimationFrame(this.rafId); }
+  stop() { if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; } }
 
   _update(dt) {
     // Smooth amplitude
@@ -237,6 +249,50 @@ function stopRecorder() {
   orb.setAmplitude(0);
 }
 
+// ── WAV encoder ───────────────────────────────────────────────
+// Converts an ArrayBuffer (webm/ogg from MediaRecorder) to a 16-bit mono WAV
+// at 16 kHz — the format Whisper handles most reliably.
+function buildWav(float32, sampleRate) {
+  const numSamples = float32.length;
+  const out = new DataView(new ArrayBuffer(44 + numSamples * 2));
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) out.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); out.setUint32(4, 36 + numSamples * 2, true);
+  str(8, 'WAVE'); str(12, 'fmt ');
+  out.setUint32(16, 16, true);   // PCM chunk size
+  out.setUint16(20, 1, true);    // PCM format
+  out.setUint16(22, 1, true);    // mono
+  out.setUint32(24, sampleRate, true);
+  out.setUint32(28, sampleRate * 2, true); // byte rate
+  out.setUint16(32, 2, true);    // block align
+  out.setUint16(34, 16, true);   // bits per sample
+  str(36, 'data'); out.setUint32(40, numSamples * 2, true);
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    out.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return out.buffer;
+}
+
+async function toWav(rawArrayBuffer) {
+  // Decode the compressed audio (webm/opus) into PCM via Web Audio API
+  const decodeCtx = new AudioContext();
+  let decoded;
+  try {
+    decoded = await decodeCtx.decodeAudioData(rawArrayBuffer.slice(0));
+  } finally {
+    decodeCtx.close().catch(() => {});
+  }
+  // Resample to 16 kHz mono (optimal for Whisper)
+  const TARGET_SR = 16000;
+  const offCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * TARGET_SR), TARGET_SR);
+  const src = offCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const rendered = await offCtx.startRendering();
+  return buildWav(rendered.getChannelData(0), TARGET_SR);
+}
+
 function recordUntilSilence() {
   return new Promise(async (resolve, reject) => {
     try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
@@ -353,7 +409,10 @@ async function listenBrainstorm(mode) {
   statusText.textContent = 'Brainstorm — 5s silence to finish';
 
   try {
-    const buf = await recordBrainstormAudio();
+    const rawBs = await recordBrainstormAudio();
+    let buf;
+    try { buf = await toWav(rawBs); }
+    catch (_) { buf = rawBs; }
     if (cancelled) return;
     setState('thinking');
     const result = await window.axiom.processBrainstorm(buf, brainstormMode);
@@ -383,10 +442,14 @@ async function listen() {
   setState('listening');
 
   try {
-    const buf = await recordUntilSilence();
+    const rawBuf = await recordUntilSilence();
     if (cancelled) return;
 
     setState('thinking');
+    // Convert to WAV before sending — Whisper rejects malformed WebM containers
+    let buf;
+    try { buf = await toWav(rawBuf); }
+    catch (_) { buf = rawBuf; } // fall back to raw if decode fails
     const result = await window.axiom.transcribeAudio(buf);
     if (cancelled) return;
 
@@ -466,6 +529,14 @@ pinBtn.addEventListener('click', () => {
 
 if (window.axiom.onPinChanged) {
   window.axiom.onPinChanged((pinned) => pinBtn.classList.toggle('pinned', pinned));
+}
+
+// Pause orb while the window is being dragged for smooth movement
+if (window.axiom.onWindowMoving) {
+  window.axiom.onWindowMoving((moving) => {
+    orb.setPaused(moving);
+    if (!moving) orb.start(); // restart the RAF loop after drag ends
+  });
 }
 
 // ── Platform events ───────────────────────────────────────────

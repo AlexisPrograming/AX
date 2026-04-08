@@ -10,7 +10,7 @@ let playbackProcess = null;
 let cancelled = false;
 
 // "Adam" — natural warm male voice (ElevenLabs default voice ID)
-const VOICE_ID = 'pNInz6obpgDQGcFmaJgB';
+const VOICE_ID = 'TX3LPaxmHKxFdv7VOQHJ';
 const MODEL_ID = 'eleven_turbo_v2_5';
 
 const PLAY_SCRIPT = `
