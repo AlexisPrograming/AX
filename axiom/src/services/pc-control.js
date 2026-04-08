@@ -4,30 +4,72 @@ const routines = require('./routines.js');
 
 // Known app shortcuts → actual commands
 const APP_MAP = {
-  'vscode':    'code',
-  'claude':    'start claude',
-  'vs code':   'code',
-  'chrome':    'start chrome',
-  'browser':   'start chrome',
-  'firefox':   'start firefox',
-  'edge':      'start msedge',
-  'spotify':   'start spotify',
-  'notepad':   'notepad',
-  'calculator':'calc',
-  'calc':      'calc',
-  'terminal':  'wt',
-  'cmd':       'cmd',
-  'powershell':'powershell',
-  'explorer':  'explorer',
-  'files':     'explorer',
-  'discord':   'start discord',
-  'slack':     'start slack',
-  'teams':     'start msteams',
-  'paint':     'mspaint',
-  'word':      'start winword',
-  'excel':     'start excel',
-  'task manager': 'taskmgr',
+  'vscode':         'code',
+  'vs code':        'code',
+  'visual studio code': 'code',
+  'claude':         'start claude',
+  'chrome':         'start chrome',
+  'google chrome':  'start chrome',
+  'browser':        'start chrome',
+  'firefox':        'start firefox',
+  'edge':           'start msedge',
+  'microsoft edge': 'start msedge',
+  'spotify':        'start spotify',
+  'notepad':        'notepad',
+  'notepad++':      'start notepad++',
+  'calculator':     'calc',
+  'calc':           'calc',
+  'terminal':       'wt',
+  'windows terminal': 'wt',
+  'cmd':            'cmd',
+  'command prompt': 'cmd',
+  'powershell':     'powershell',
+  'explorer':       'explorer',
+  'files':          'explorer',
+  'file explorer':  'explorer',
+  'discord':        'start discord',
+  'slack':          'start slack',
+  'teams':          'start msteams',
+  'microsoft teams': 'start msteams',
+  'paint':          'mspaint',
+  'ms paint':       'mspaint',
+  'word':           'start winword',
+  'microsoft word': 'start winword',
+  'excel':          'start excel',
+  'microsoft excel': 'start excel',
+  'powerpoint':     'start powerpnt',
+  'outlook':        'start outlook',
+  'task manager':   'taskmgr',
+  'steam':          'start steam',
+  'epic games':     'start "" "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe"',
+  'epic':           'start "" "C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win32\\EpicGamesLauncher.exe"',
+  'obs':            'start obs64',
+  'obs studio':     'start obs64',
+  'vlc':            'start vlc',
+  'zoom':           'start zoom',
+  'whatsapp':       'start whatsapp',
+  'telegram':       'start telegram',
+  'blender':        'start blender',
+  'figma':          'start figma',
+  'postman':        'start postman',
+  'insomnia':       'start insomnia',
+  'settings':       'start ms-settings:',
+  'windows settings': 'start ms-settings:',
+  'snipping tool':  'start ms-screenclip:',
+  'snip':           'start ms-screenclip:',
+  'photos':         'start ms-photos:',
+  'maps':           'start bingmaps:',
+  'mail':           'start outlookmail:',
+  'store':          'start ms-windows-store:',
+  'xbox':           'start xbox:',
+  'github desktop': 'start github',
+  'gitkraken':      'start gitkraken',
 };
+
+// Normalize spotify.js { ok, error } → standard { success, error }
+function normalizeSpotify(r) {
+  return r.ok ? { success: true } : { success: false, error: r.error || 'Media key failed' };
+}
 
 // Execute an action object from Claude's response
 async function executeAction(action) {
@@ -90,13 +132,13 @@ async function executeAction(action) {
       return { success: true, output: 'Memory updated' };
 
     case 'spotify_play':
-      return require('./spotify.js').play();
+      return require('./spotify.js').play().then(normalizeSpotify);
     case 'spotify_pause':
-      return require('./spotify.js').pause();
+      return require('./spotify.js').pause().then(normalizeSpotify);
     case 'spotify_next':
-      return require('./spotify.js').next();
+      return require('./spotify.js').next().then(normalizeSpotify);
     case 'spotify_previous':
-      return require('./spotify.js').previous();
+      return require('./spotify.js').previous().then(normalizeSpotify);
     case 'spotify_current':
       // Handled by brain.js — nothing to do here
       return { success: true };
@@ -150,8 +192,8 @@ function openApp(appName) {
     return run(cmd);
   }
 
-  // Try launching directly — Windows will search PATH and Start Menu
-  return run(`start "" "${appName}"`);
+  // Try via Windows shell — searches PATH, Start Menu, and registered app names
+  return run(`start "" "${appName.replace(/"/g, '')}"`)
 }
 
 function openUrl(url) {
@@ -253,35 +295,52 @@ function setReminder(message, minutes) {
   return Promise.resolve({ success: true, output: `Reminder set for ${mins} minute(s)` });
 }
 
-// Safe command runner with allowlist
-const SAFE_PATTERNS = [
-  /^start\s/i,
-  /^explorer/i,
-  /^notepad/i,
-  /^calc/i,
-  /^code/i,
-  /^wt$/i,
-  /^taskmgr/i,
-  /^mspaint/i,
-  /^shutdown\s/i,
-  /^rundll32/i,
-  /^powershell\s+-NoProfile\s+-Command/i,
+// Block only genuinely destructive system commands
+const BLOCKED_PATTERNS = [
+  /\bformat\s+[a-z]:/i,
+  /\bdiskpart\b/i,
+  /\breg\s+(delete|add)\b/i,
+  /\bnetsh\b.*\bfirewall\b/i,
+  /\bsc\s+(delete|stop|config)\b/i,
+  /\bsfc\b/i,
+  /\bcacls\b/i,
+  /\bicacls\b/i,
+  /\bbcdedit\b/i,
+  /\bbootrec\b/i,
 ];
 
 function runSafe(command) {
   if (!command) return Promise.resolve({ success: false, error: 'No command specified' });
 
-  const isSafe = SAFE_PATTERNS.some((p) => p.test(command.trim()));
-  if (!isSafe) {
-    return Promise.resolve({ success: false, error: `Blocked unsafe command: ${command}` });
+  const blocked = BLOCKED_PATTERNS.some((p) => p.test(command.trim()));
+  if (blocked) {
+    return Promise.resolve({ success: false, error: `Blocked dangerous command: ${command}` });
   }
 
   return run(command);
 }
 
 function run(command) {
+  // Build a PATH that includes common Windows app locations so packaged Electron
+  // inherits the same environment as an interactive shell.
+  const extraPaths = [
+    'C:\\Windows\\System32',
+    'C:\\Windows',
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+    'C:\\Program Files\\Google\\Chrome\\Application',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application',
+    'C:\\Program Files\\Mozilla Firefox',
+    'C:\\Program Files\\Microsoft VS Code',
+    'C:\\Program Files\\WindowsApps',
+  ].join(';');
+
+  const env = {
+    ...process.env,
+    PATH: [process.env.PATH, extraPaths].filter(Boolean).join(';'),
+  };
+
   return new Promise((resolve) => {
-    exec(command, { timeout: 10000, windowsHide: true }, (err, stdout, stderr) => {
+    exec(command, { timeout: 10000, windowsHide: true, shell: 'cmd.exe', env }, (err, stdout, stderr) => {
       if (err) {
         resolve({ success: false, error: stderr || err.message });
       } else {

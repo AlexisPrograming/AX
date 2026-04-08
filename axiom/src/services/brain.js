@@ -133,12 +133,14 @@ VOICE NOTES:
 - IMPORTANT: For save_note, the content field must be the clean idea/thought only — never include the trigger words like "remember this" or "note:" in the content.
 
 SPOTIFY / MUSIC CONTROL:
-- If Alexis says "play music", "resume", "unpause", or "play Spotify" → emit spotify_play
+- If Alexis says "play music", "resume", "unpause", or "play Spotify" → emit spotify_play (sends global media key — works if a player is already loaded)
+- If he says "open YouTube Music", "open music", "play music on YouTube", "YouTube music" → emit open_url with url "https://music.youtube.com"
 - If he says "pause", "stop music", "stop the music" → emit spotify_pause
 - If he says "next song", "skip", "next track" → emit spotify_next
 - If he says "previous song", "go back", "last song" → emit spotify_previous
 - If he says "what song is this", "what's playing", "what are you playing" → emit spotify_current
 - These media key commands control whatever media player is active on the PC (Spotify, YouTube Music, etc.)
+- If the user just says "play music" with no player context, default to opening YouTube Music with open_url "https://music.youtube.com"
 
 PROACTIVE / QUIET MODE:
 - If Alexis says "quiet mode", "quiet mode on", "stop bothering me", "don't interrupt me", emit set_quiet_mode with enabled:true.
@@ -487,20 +489,14 @@ async function sendMessage(userMessage) {
     } else if (parsed.action.type === 'spotify_current') {
       try {
         const spotify = require('./spotify.js');
-        if (!spotify.isAuthenticated()) {
-          parsed.speech = "I'm not connected to Spotify yet. Say 'connect Spotify' to link your account.";
+        const track = await spotify.getCurrentTrack();
+        if (!track) {
+          parsed.speech = "Nothing's playing right now.";
         } else {
-          const track = await spotify.getCurrentTrack();
-          if (!track) {
-            parsed.speech = "Nothing's playing on Spotify right now.";
-          } else {
-            parsed.speech = track.playing
-              ? `That's "${track.name}" by ${track.artist}.`
-              : `Spotify is paused on "${track.name}" by ${track.artist}.`;
-          }
+          parsed.speech = `That's "${track.name}"${track.artist ? ` by ${track.artist}` : ''}.`;
         }
       } catch (err) {
-        parsed.speech = `Hmm, couldn't check Spotify — ${err.message}.`;
+        parsed.speech = `Hmm, couldn't check what's playing — ${err.message}.`;
       }
       parsed.action = null;
     }
@@ -517,27 +513,44 @@ async function sendMessage(userMessage) {
 }
 
 function parseResponse(reply) {
-  const lines = reply.split('\n').filter((l) => l.trim());
+  if (!reply) return { speech: '', action: null };
 
-  if (lines.length === 0) {
-    return { speech: reply, action: null };
-  }
+  // Strip any [context — ...] tag Claude might accidentally echo back
+  const cleaned = reply.replace(/^\[context\s*[—–-][^\]]*\]\s*/i, '').trim();
 
-  const firstLine = lines[0].trim();
+  const lines = cleaned.split('\n').filter((l) => l.trim());
+  if (lines.length === 0) return { speech: cleaned, action: null };
 
-  if (firstLine.startsWith('{') && firstLine.endsWith('}')) {
-    try {
-      const action = JSON.parse(firstLine);
-      if (action.type) {
-        const speech = lines.slice(1).join(' ').trim() || 'Done.';
-        return { speech, action };
-      }
-    } catch {
-      // Not valid JSON — treat entire response as speech
+  // Search every line for an embedded JSON action object
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    // Case A: entire line is JSON — {"type":"..."}
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        const action = JSON.parse(line);
+        if (action.type) {
+          const speech = [...lines.slice(0, i), ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
+          return { speech, action };
+        }
+      } catch { /* not valid JSON */ }
+    }
+
+    // Case B: JSON at start of line with trailing text — {"type":"..."} Some spoken text
+    const inlineMatch = line.match(/^(\{.+?\})\s+(.+)$/s);
+    if (inlineMatch) {
+      try {
+        const action = JSON.parse(inlineMatch[1]);
+        if (action.type) {
+          const rest = inlineMatch[2].trim();
+          const speech = [...lines.slice(0, i), rest, ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
+          return { speech, action };
+        }
+      } catch { /* not valid JSON */ }
     }
   }
 
-  return { speech: reply, action: null };
+  return { speech: cleaned, action: null };
 }
 
 // ── Clipboard intent detection ──────────────────────────────

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('axiom', {
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   runCommand: (command) => ipcRenderer.invoke('run-command', command),
   minimize: () => ipcRenderer.send('window-minimize'),
+  togglePin: () => ipcRenderer.invoke('toggle-pin'),
+  onPinChanged: (cb) => ipcRenderer.on('pin-changed', (_e, pinned) => cb(pinned)),
   userActive: () => ipcRenderer.send('user-active'),
   onBriefing: (cb) => ipcRenderer.on('axiom-briefing', (_e, text) => cb(text)),
   onWakeWord: (cb) => ipcRenderer.on('wake-word-activated', () => cb()),

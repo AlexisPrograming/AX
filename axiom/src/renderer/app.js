@@ -4,6 +4,7 @@ const statusBar = document.getElementById('statusbar');
 const statusText = document.getElementById('status-text');
 const micBtn = document.getElementById('mic-btn');
 const closeBtn = document.getElementById('close-btn');
+const pinBtn = document.getElementById('pin-btn');
 const recDot = document.getElementById('rec-dot');
 
 let busy = false;
@@ -414,6 +415,19 @@ closeBtn.addEventListener('click', () => {
   cancelAll();
   window.axiom.minimize();
 });
+
+pinBtn.addEventListener('click', () => {
+  window.axiom.togglePin().then((pinned) => {
+    pinBtn.classList.toggle('pinned', pinned);
+    pinBtn.title = pinned ? 'Unpin (currently always on top)' : 'Pin on top';
+  });
+});
+
+if (window.axiom.onPinChanged) {
+  window.axiom.onPinChanged((pinned) => {
+    pinBtn.classList.toggle('pinned', pinned);
+  });
+}
 
 // ── Init ─────────────────────────────────────────────────
 

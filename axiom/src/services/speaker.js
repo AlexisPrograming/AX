@@ -123,7 +123,7 @@ function playAudio(filePath) {
   return new Promise((resolve, reject) => {
     playbackProcess = execFile(
       'powershell',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', playScriptPath, '-FilePath', filePath],
+      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', playScriptPath, '-FilePath', filePath],
       { timeout: 60000, windowsHide: true },
       (err) => {
         playbackProcess = null;

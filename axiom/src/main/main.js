@@ -31,6 +31,7 @@ function getOpenAI() {
 let mainWindow = null;
 let tray = null;
 let lastAxiomResponse = null;
+let windowPinned = false;
 
 const launchedAtLogin = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
 
@@ -64,6 +65,14 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // Raise to top when focused; step back when blurred (unless pinned)
+  mainWindow.on('focus', () => {
+    mainWindow.setAlwaysOnTop(true, 'floating');
+  });
+  mainWindow.on('blur', () => {
+    if (!windowPinned) mainWindow.setAlwaysOnTop(false);
+  });
 
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
@@ -482,6 +491,12 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
 
     const actionResult = await executeAction(result.action);
     console.log('[AXIOM action]', result.action.type, actionResult);
+
+    if (!actionResult.success) {
+      const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
+      lastAxiomResponse = errReply;
+      return errReply;
+    }
   }
 
   lastAxiomResponse = result.speech;
@@ -538,6 +553,12 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
     if (result.action) {
       const actionResult = await executeAction(result.action);
       console.log('[AXIOM action]', result.action.type, actionResult);
+
+      if (!actionResult.success) {
+        const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
+        lastAxiomResponse = errReply;
+        return errReply;
+      }
     }
     lastAxiomResponse = result.speech;
     return result.speech;
@@ -597,4 +618,11 @@ ipcMain.handle('process-brainstorm', async (_event, { arrayBuffer, mode }) => {
 
 ipcMain.on('window-minimize', () => {
   mainWindow.hide();
+});
+
+ipcMain.handle('toggle-pin', () => {
+  windowPinned = !windowPinned;
+  mainWindow.setAlwaysOnTop(windowPinned, 'screen-saver');
+  mainWindow.webContents.send('pin-changed', windowPinned);
+  return windowPinned;
 });
