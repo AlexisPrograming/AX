@@ -4,6 +4,24 @@ const routines = require('./routines.js');
 
 const client = new Anthropic();
 
+// ── Retry helper for 529 overload errors ────────────────────
+async function retryOnOverload(fn, retries = 3, delayMs = 1500) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isOverloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
+      if (isOverloaded && i < retries - 1) {
+        console.warn(`[AXIOM] Anthropic overloaded — retry ${i + 1}/${retries - 1} in ${delayMs}ms`);
+        await new Promise(r => setTimeout(r, delayMs));
+        delayMs *= 2; // exponential backoff
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // ── Personality config ──────────────────────────────────────
 const PERSONALITY_CONFIG = {
   userName: 'Alexis',
@@ -188,12 +206,30 @@ MOUSE CONTROL (requires a screenshot so you know coordinates — AXIOM will auto
 - If you're not sure exactly where to click, give your best estimate and say what you're clicking so Alexis can confirm.
 - You CAN click things. You CAN scroll. Don't say you can't.
 
-FOLLOW-UP LISTENING:
-- If your response asks Alexis a question, needs his input, or requires clarification before you can proceed → append [NEEDS_REPLY] at the very end of your speech text (after all other content, no space before it). The microphone will automatically reopen so he can answer without pressing anything.
-- If you're just giving information, completing a task, confirming something, or making a statement → do NOT include [NEEDS_REPLY]. The mic stays closed.
-- Examples that NEED [NEEDS_REPLY]: "Which app do you want me to open?[NEEDS_REPLY]" / "Got it — what folder should I save it to?[NEEDS_REPLY]" / "Want me to go ahead and close everything?[NEEDS_REPLY]"
-- Examples that do NOT: "Opening Chrome." / "Done, saved to your documents." / "It's 72 degrees in Miami."
-- NEVER include [NEEDS_REPLY] on actions like open_app, web_search, etc. Only include it in pure speech responses that await input.
+════════════════════════════════════════════════
+FOLLOW-UP LISTENING — THIS RULE IS NON-NEGOTIABLE
+════════════════════════════════════════════════
+MANDATORY: If your reply contains a question, asks for input, needs clarification, or expects Alexis to respond in any way → you MUST append [NEEDS_REPLY] at the very end. Every single time. No exceptions.
+
+ALWAYS append [NEEDS_REPLY] when:
+- Your response ends with or contains a question mark
+- You're asking which/what/where/when/how before acting
+- You need confirmation before doing something
+- You're asking Alexis to choose between options
+- You need more information to complete the request
+Examples: "Which app?[NEEDS_REPLY]" / "Want me to close everything?[NEEDS_REPLY]" / "¿Cuál prefieres?[NEEDS_REPLY]" / "Got it — what should I name it?[NEEDS_REPLY]"
+
+NEVER append [NEEDS_REPLY] when:
+- Executing an action (open_app, web_search, type_text, etc.)
+- Giving a final answer or piece of information
+- Confirming a completed task
+Examples: "Opening Chrome." / "Done." / "It's 3pm." / "Saved to documents."
+
+PLACEMENT: [NEEDS_REPLY] must be the very last characters — no space before it.
+✓ CORRECT: "Which folder?[NEEDS_REPLY]"
+✗ WRONG:   "Which folder? [NEEDS_REPLY]"
+✗ WRONG:   "[NEEDS_REPLY] Which folder?"
+════════════════════════════════════════════════
 
 PROACTIVE / QUIET MODE:
 - If Alexis says "quiet mode", "quiet mode on", "stop bothering me", "don't interrupt me", emit set_quiet_mode with enabled:true.
@@ -411,12 +447,12 @@ async function sendMessage(userMessage) {
   // Prepend the (private) context tag so Claude can read mood/time without the user ever seeing it
   messages.push({ role: 'user', content: `${contextTag}\n${text}` });
 
-  const response = await client.messages.create({
+  const response = await retryOnOverload(() => client.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 400,
     system: buildSystemPrompt(),
     messages,
-  });
+  }));
 
   const reply = response.content[0].text;
   messages.push({ role: 'assistant', content: reply });
@@ -669,12 +705,12 @@ async function sendMessageWithClipboard(userMessage, clipboardText, intent) {
   const userContent = `${contextTag}\n[CLIPBOARD CONTENT]\n---\n${clipboardText}\n---\n\nUser said: "${text}"\nTask: ${instruction}`;
   messages.push({ role: 'user', content: userContent });
 
-  const response = await client.messages.create({
+  const response = await retryOnOverload(() => client.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 800,
     system: buildSystemPrompt(),
     messages,
-  });
+  }));
 
   const reply = response.content[0].text;
 
@@ -731,12 +767,12 @@ async function sendMessageWithImage(userMessage, base64Png) {
 
   messages.push({ role: 'user', content: userContent });
 
-  const response = await client.messages.create({
+  const response = await retryOnOverload(() => client.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 600,
     system: buildSystemPrompt(),
     messages,
-  });
+  }));
 
   const reply = response.content[0].text;
 
@@ -836,12 +872,12 @@ RULES:
 ${ctx}`;
 
   try {
-    const response = await client.messages.create({
+    const response = await retryOnOverload(() => client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 220,
       system: buildSystemPrompt(),
       messages: [{ role: 'user', content: briefingPrompt }],
-    });
+    }));
     const text = response.content[0].text.trim();
     return text || `${greeting} It's ${dateLine}. What are we working on today?`;
   } catch (err) {
@@ -877,12 +913,12 @@ Rules:
 ${ctx}`;
 
   try {
-    const response = await client.messages.create({
+    const response = await retryOnOverload(() => client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 120,
       system: buildSystemPrompt(),
       messages: [{ role: 'user', content: prompt }],
-    });
+    }));
     return response.content[0].text.trim();
   } catch (err) {
     console.error('[AXIOM proactive gen] failed:', err.message);
@@ -894,7 +930,7 @@ ${ctx}`;
 async function explainError(errorText) {
   if (!errorText) return "No error to explain.";
   try {
-    const response = await client.messages.create({
+    const response = await retryOnOverload(() => client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 200,
       system: buildSystemPrompt(),
@@ -902,7 +938,7 @@ async function explainError(errorText) {
         role: 'user',
         content: `You just detected this error in Alexis's terminal:\n\n${errorText}\n\nExplain it in 2-3 SHORT spoken sentences like a friend who codes. What went wrong in plain English — no jargon unless necessary, no markdown, no code blocks. Lead with what the error actually means, then the most likely cause. Keep it under 40 words total.`,
       }],
-    });
+    }));
     return response.content[0].text.trim();
   } catch (err) {
     console.error('[AXIOM error explain] failed:', err.message);
@@ -915,7 +951,7 @@ async function summarizeSearchResults(query, resultsText) {
   if (!resultsText) return "I couldn't find anything useful on that.";
 
   try {
-    const response = await client.messages.create({
+    const response = await retryOnOverload(() => client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 180,
       system: buildSystemPrompt(),
@@ -923,7 +959,7 @@ async function summarizeSearchResults(query, resultsText) {
         role: 'user',
         content: `You just searched the web for: "${query}"\n\nHere are the results:\n${resultsText}\n\nSummarize this in 2-3 short spoken sentences for Alexis. Be direct — give the key info right away. No markdown, no bullets. Speak naturally like you're telling a friend what you found. If there's a clear answer, lead with it.`,
       }],
-    });
+    }));
     return response.content[0].text.trim();
   } catch (err) {
     console.error('[AXIOM search summarize] failed:', err.message);

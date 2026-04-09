@@ -628,6 +628,7 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
   }
 
   lastAxiomResponse = result.speech;
+  console.log(`[AXIOM reply] needsReply=${result.needsReply} speech="${result.speech?.slice(0,80)}"`);
   return { speech: result.speech, needsReply: result.needsReply || false };
 });
 

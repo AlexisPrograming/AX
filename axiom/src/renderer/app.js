@@ -385,7 +385,7 @@ async function listenBrainstorm(mode) {
   cancelled = false;
   brainstormMode = mode || 'general';
   setState('listening');
-  statusText.textContent = 'Brainstorm — 5s silence to finish';
+  // statusText removed from UI
 
   try {
     const rawBs = await recordBrainstormAudio();
@@ -481,7 +481,6 @@ async function listen() {
     if (needsReply) {
       busy = false;
       setState('listening');
-      statusText.textContent = 'Listening for reply…';
       await new Promise(r => setTimeout(r, 350));
       if (!cancelled) { listen(); return; }
     }
@@ -492,9 +491,9 @@ async function listen() {
     showSubtitle(err.message || 'Something went wrong.');
     setState('error');
     setTimeout(() => setState('ready'), 3000);
+  } finally {
+    busy = false;
   }
-
-  busy = false;
 }
 
 // ── Interactions ──────────────────────────────────────────────
