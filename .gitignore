@@ -1,0 +1,24 @@
+node_modules/
+
+# Environment / secrets
+.env
+*.env
+.env.*
+
+# Voice auth — personal voice data & downloaded models
+voice-auth/enrolled_voice.pkl
+voice-auth/venv/
+voice-auth/models/
+
+# Electron build output
+axiom/dist/
+
+# Logs
+*.log
+logs/
+
+# API keys or credentials files
+*.key
+*.pem
+secrets.*
+credentials.*

@@ -7,37 +7,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="panel">
-
-    <!-- Title bar (draggable) -->
-    <div id="titlebar">
-      <span id="logo">AX</span>
-      <div id="titlebar-btns">
-        <button id="pin-btn" title="Pin on top">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="17" x2="12" y2="22"></line>
-            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
-          </svg>
-        </button>
-        <button id="close-btn" title="Hide">&times;</button>
-      </div>
-    </div>
-
-    <!-- Particle orb — click to talk -->
-    <div id="orb-area">
-      <canvas id="orb-canvas" width="210" height="210"></canvas>
-    </div>
-
-    <!-- Last interaction subtitle (fades in/out) -->
-    <div id="subtitle"></div>
-
-    <!-- Status bar -->
-    <div id="statusbar">
-      <span id="status-dot"></span>
-      <span id="status-text">Ready</span>
-    </div>
-
-  </div>
+  <canvas id="orb-canvas" width="200" height="200"></canvas>
   <script src="app.js"></script>
 </body>
 </html>

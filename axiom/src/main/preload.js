@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('axiom', {
   onProactive: (cb) => ipcRenderer.on('axiom-proactive', (_e, text) => cb(text)),
   onBrainstormStart: (cb) => ipcRenderer.on('brainstorm-start', (_e, mode) => cb(mode)),
   onWindowMoving: (cb) => ipcRenderer.on('window-moving', (_e, moving) => cb(moving)),
+  moveWindowBy: (dx, dy) => ipcRenderer.send('move-window-by', dx, dy),
   processBrainstorm: (arrayBuffer, mode) => ipcRenderer.invoke('process-brainstorm', { arrayBuffer, mode }),
 });

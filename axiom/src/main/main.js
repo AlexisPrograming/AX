@@ -10,6 +10,7 @@ const pomodoro        = require('../services/pomodoro.js');
 const terminalWatcher = require('../services/terminal-watcher.js');
 const clipboardService = require('../services/clipboard.js');
 const usageTracker    = require('../services/usage-tracker.js');
+const voiceAuth       = require('../services/voice-auth.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -34,6 +35,7 @@ let tray = null;
 let lastAxiomResponse = null;
 let windowPinned = false;
 
+
 const launchedAtLogin = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
 
 // ── Auto-launch ──────────────────────────────────────────────
@@ -50,15 +52,14 @@ function applyAutoLaunch(enabled) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 240,
-    height: 300,
+    width: 220,
+    height: 220,
     show: false,
     frame: false,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
     transparent: true,
-    // Reduces DWM compositing work — browser still composites internally
     backgroundThrottling: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -145,11 +146,28 @@ function buildTrayMenu(focusLabel) {
 // ── Window positioning ───────────────────────────────────────
 
 function showWindow() {
-  const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
-  const [winW, winH] = mainWindow.getSize();
-  mainWindow.setPosition(screenW - winW - 12, screenH - winH - 12);
+  // Always moves to the default position (top-right). Used on first launch / tray click.
+  const { width: screenW } = screen.getPrimaryDisplay().workAreaSize;
+  const [winW] = mainWindow.getSize();
+  mainWindow.setPosition(screenW - winW - 12, 12);
   mainWindow.show();
   mainWindow.focus();
+}
+
+function revealInPlace() {
+  // Wake-word activation — show without moving if the window already has a position.
+  if (mainWindow.isVisible()) {
+    mainWindow.focus();
+    return;
+  }
+  // If it was hidden and has never been placed, use the default position.
+  const [x, y] = mainWindow.getPosition();
+  if (x === 0 && y === 0) {
+    showWindow();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
 }
 
 function toggleWindow() {
@@ -308,10 +326,10 @@ async function startWakeWord() {
 }
 
 function onWakeWordDetected() {
-  // Small chime + show window + tell renderer to start listening
+  // Small chime + reveal in-place + tell renderer to start listening
   playActivationChime();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    showWindow();
+    revealInPlace();
     mainWindow.webContents.send('wake-word-activated');
   }
 }
@@ -556,6 +574,20 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       }
     }
 
+    // Pin / unpin window via voice command
+    if (result.action.type === 'pin_window') {
+      windowPinned = true;
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      lastAxiomResponse = result.speech;
+      return { speech: result.speech, needsReply: false };
+    }
+    if (result.action.type === 'unpin_window') {
+      windowPinned = false;
+      mainWindow.setAlwaysOnTop(true, 'floating');
+      lastAxiomResponse = result.speech;
+      return { speech: result.speech, needsReply: false };
+    }
+
     // Type text or send keys into previously focused window
     if (result.action.type === 'type_text') {
       await typeTextIntoActiveWindow(result.action.text || '');
@@ -684,6 +716,14 @@ ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
       return { error: 'no-speech' };
     }
     const buffer = Buffer.from(arrayBuffer);
+
+    // ── Voice authentication (if server is running) ───────────
+    const auth = await voiceAuth.verify(buffer);
+    if (auth.available && !auth.verified) {
+      console.warn(`[VoiceAuth] Rejected — score: ${auth.score}`);
+      return { error: 'voice-not-authorized', score: auth.score };
+    }
+
     const file = await toFile(buffer, 'audio.wav', { type: 'audio/wav' });
 
     const result = await getOpenAI().audio.transcriptions.create({
@@ -727,6 +767,11 @@ ipcMain.handle('process-brainstorm', async (_event, { arrayBuffer, mode }) => {
 
 ipcMain.on('window-minimize', () => {
   mainWindow.hide();
+});
+
+ipcMain.on('move-window-by', (e, dx, dy) => {
+  const [x, y] = mainWindow.getPosition();
+  mainWindow.setPosition(x + Math.round(dx), y + Math.round(dy));
 });
 
 ipcMain.handle('toggle-pin', () => {

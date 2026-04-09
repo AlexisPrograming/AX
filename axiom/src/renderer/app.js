@@ -1,10 +1,5 @@
 // ── DOM refs ─────────────────────────────────────────────────
-const canvas     = document.getElementById('orb-canvas');
-const subtitleEl = document.getElementById('subtitle');
-const statusBar  = document.getElementById('statusbar');
-const statusText = document.getElementById('status-text');
-const pinBtn     = document.getElementById('pin-btn');
-const closeBtn   = document.getElementById('close-btn');
+const canvas = document.getElementById('orb-canvas');
 
 // ── Particle Orb ─────────────────────────────────────────────
 
@@ -18,7 +13,7 @@ class ParticleOrb {
     this.cy  = this.H / 2;
 
     this.N          = 240;        // dot count
-    this.BASE_R     = 72;         // base sphere radius (px)
+    this.BASE_R     = 55;         // base sphere radius (px)
     this.FOV        = 280;
     this.rotY       = 0;
     this.rotX       = 0.42;       // slight tilt
@@ -142,20 +137,23 @@ class ParticleOrb {
     // Back-to-front sort
     proj.sort((a, b) => a.depth - b.depth);
 
-    // Draw dots
+    // Draw phosphorescent dots with glow
+    ctx.shadowColor = 'rgba(0,255,120,0.7)';
+    ctx.shadowBlur  = 6 + amp * 10;
     proj.forEach(({ x, y, depth }) => {
-      const alpha   = 0.12 + depth * 0.88;
-      const dotSize = 0.7 + depth * 1.5 + amp * 1.2;
+      const alpha   = 0.25 + depth * 0.75;
+      const dotSize = 0.8 + depth * 1.6 + amp * 1.4;
       ctx.beginPath();
       ctx.arc(x, y, dotSize, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(29,158,117,${alpha.toFixed(2)})`;
+      ctx.fillStyle = `rgba(0,255,120,${alpha.toFixed(2)})`;
       ctx.fill();
     });
+    ctx.shadowBlur = 0;
 
     // Core glow when active
     if (amp > 0.06) {
       const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7);
-      grd.addColorStop(0, `rgba(29,158,117,${(amp * 0.1).toFixed(3)})`);
+      grd.addColorStop(0, `rgba(0,255,120,${(amp * 0.13).toFixed(3)})`);
       grd.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, W, H);
@@ -169,30 +167,11 @@ orb.start();
 // ── State management ─────────────────────────────────────────
 
 function setState(state) {
-  statusBar.className = state === 'ready' ? '' : state;
   orb.setState(state === 'ready' ? 'idle' : state);
-
-  const labels = {
-    ready:     'Ready',
-    listening: 'Listening',
-    thinking:  'Thinking',
-    speaking:  'Speaking',
-    error:     'Error',
-  };
-  statusText.textContent = labels[state] ?? 'Ready';
 }
 
-// ── Subtitle (fading last-message) ───────────────────────────
-
-let subtitleTimer = null;
-function showSubtitle(text) {
-  if (!text) return;
-  const preview = text.length > 100 ? text.slice(0, 100) + '…' : text;
-  subtitleEl.textContent = preview;
-  subtitleEl.classList.add('visible');
-  if (subtitleTimer) clearTimeout(subtitleTimer);
-  subtitleTimer = setTimeout(() => subtitleEl.classList.remove('visible'), 5000);
-}
+// subtitle is gone — keep stub so call-sites don't throw
+function showSubtitle() {}
 
 // ── Audio recording state ─────────────────────────────────────
 
@@ -458,6 +437,13 @@ async function listen() {
       busy = false;
       return;
     }
+    if (result.error === 'voice-not-authorized') {
+      // Unknown voice — pulse red briefly then go silent
+      orb.setState('error');
+      await window.axiom.speakText('Voice not recognized.');
+      setTimeout(() => { setState('ready'); busy = false; }, 2000);
+      return;
+    }
     if (result.error) {
       showSubtitle(`Transcription error: ${result.error}`);
       setState('error');
@@ -513,23 +499,44 @@ async function listen() {
 
 // ── Interactions ──────────────────────────────────────────────
 
-canvas.addEventListener('click', () => {
-  window.axiom.userActive && window.axiom.userActive();
-  if (busy) cancelAll(); else listen();
+// Hold-and-drag to move window; quick release = click
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  let startX = e.screenX;
+  let startY = e.screenY;
+  let dragging = false;
+
+  const onMove = (ev) => {
+    const dx = ev.screenX - startX;
+    const dy = ev.screenY - startY;
+    if (!dragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+      dragging = true;
+      orb.setPaused(true);
+    }
+    if (dragging) {
+      window.axiom.moveWindowBy(dx, dy);
+      startX = ev.screenX;
+      startY = ev.screenY;
+    }
+  };
+
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    if (dragging) {
+      orb.setPaused(false);
+    } else {
+      // Quick release = click
+      window.axiom.userActive && window.axiom.userActive();
+      if (busy) cancelAll(); else listen();
+    }
+    dragging = false;
+  };
+
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
 });
 
-closeBtn.addEventListener('click', () => { cancelAll(); window.axiom.minimize(); });
-
-pinBtn.addEventListener('click', () => {
-  window.axiom.togglePin().then((pinned) => {
-    pinBtn.classList.toggle('pinned', pinned);
-    pinBtn.title = pinned ? 'Unpin' : 'Pin on top';
-  });
-});
-
-if (window.axiom.onPinChanged) {
-  window.axiom.onPinChanged((pinned) => pinBtn.classList.toggle('pinned', pinned));
-}
 
 // Pause orb while the window is being dragged for smooth movement
 if (window.axiom.onWindowMoving) {
