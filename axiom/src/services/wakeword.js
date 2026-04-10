@@ -30,6 +30,13 @@ const WAKE_PHRASES = [
   'a-x', 'hey acts', 'hey axis', 'heyax', // common Whisper mishearings
 ];
 
+// ── Interrupt phrases — stop AXIOM mid-speech ─────────────────
+// Intentionally different from wake word to avoid collision.
+const INTERRUPT_PHRASES = [
+  'stop', 'enough', 'quiet', 'shut up', 'pause',
+  'ax stop', 'stop talking', 'be quiet', 'cancel',
+];
+
 // ── State ─────────────────────────────────────────────────────
 let recorder        = null;
 let running         = false;
@@ -47,6 +54,11 @@ function rms(frame) {
 function isWakePhrase(text) {
   const t = text.toLowerCase().trim();
   return WAKE_PHRASES.some(p => t.includes(p));
+}
+
+function isInterruptPhrase(text) {
+  const t = text.toLowerCase().trim();
+  return INTERRUPT_PHRASES.some(p => t === p || t.startsWith(p + ' ') || t.endsWith(' ' + p));
 }
 
 // Build a minimal WAV from accumulated Int16 PCM frames
@@ -150,7 +162,10 @@ async function detectLoop(onDetected) {
               const text = await transcribe(wav);
               console.log('[AXIOM wakeword] heard:', JSON.stringify(text));
 
-              if (text && isWakePhrase(text)) {
+              if (text && isInterruptPhrase(text)) {
+                console.log('[AXIOM wakeword] INTERRUPT detected:', JSON.stringify(text));
+                onInterrupt && onInterrupt();
+              } else if (text && isWakePhrase(text)) {
                 lastDetectedAt = Date.now();
                 console.log('[AXIOM wakeword] WAKE WORD DETECTED');
                 onDetected && onDetected();
@@ -173,7 +188,10 @@ async function detectLoop(onDetected) {
 
 // ── Public API ────────────────────────────────────────────────
 
-async function start(onDetected) {
+let onInterrupt = null;
+
+async function start(onDetected, onInterruptCb) {
+  onInterrupt = onInterruptCb || null;
   if (running) return { ok: true, alreadyRunning: true };
 
   if (!PvRecorder) {

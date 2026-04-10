@@ -576,3 +576,12 @@ if (window.axiom.onBriefing) {
     setTimeout(() => setState('ready'), Math.min(15000, 2000 + text.length * 60));
   });
 }
+
+// ── Interrupt ("stop") — wakeword detected while AXIOM is speaking ──
+if (window.axiom.onInterrupted) {
+  window.axiom.onInterrupted(() => {
+    cancelAll();
+    // Short pause then start listening so user can give next command
+    setTimeout(() => { if (!busy) listen(); }, 400);
+  });
+}

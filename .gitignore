@@ -5,13 +5,21 @@ node_modules/
 *.env
 .env.*
 
-# Voice auth — personal voice data & downloaded models
+# Voice auth — personal voice data, models, and Python environment
 voice-auth/enrolled_voice.pkl
 voice-auth/venv/
 voice-auth/models/
+voice-auth/__pycache__/
+voice-auth/*.pyc
+
+# Python bytecode anywhere
+__pycache__/
+*.pyc
+*.pyo
 
 # Electron build output
 axiom/dist/
+dist/
 
 # Logs
 *.log
@@ -22,3 +30,8 @@ logs/
 *.pem
 secrets.*
 credentials.*
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini

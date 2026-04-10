@@ -31,7 +31,10 @@
       "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 10\")",
       "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 6\")",
       "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 5\")",
-      "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 4\")"
+      "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 4\")",
+      "Bash(dir D:\\\\AX\\\\voice-auth /b)",
+      "Bash(dir D:\\\\AX\\\\axiom /b)",
+      "Bash(git check-ignore:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

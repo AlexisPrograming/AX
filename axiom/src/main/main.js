@@ -307,21 +307,42 @@ app.whenReady().then(() => {
     console.error('[AXIOM proactive] init failed:', err);
   }
 
-  // Keep the wake-word listener alive across sleep/wake cycles
+  // Sleep → hide AXIOM. Wake → bring it back.
   powerMonitor.on('suspend', async () => {
-    console.log('[AXIOM] system suspending — stopping wake word');
+    console.log('[AXIOM] system suspending — hiding');
     await wakeword.stop();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   });
-  powerMonitor.on('resume', () => {
-    console.log('[AXIOM] system resumed — restarting wake word');
+  powerMonitor.on('resume', async () => {
+    console.log('[AXIOM] system resumed — showing');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      revealInPlace();
+      // Short wake-up greeting (no full briefing)
+      try {
+        const { speak } = require('../services/speaker.js');
+        const greetings = ['Hey, welcome back.', 'Back at it.', 'Welcome back.'];
+        await speak(greetings[Math.floor(Math.random() * greetings.length)]);
+      } catch {}
+    }
     startWakeWord();
   });
 });
 
 async function startWakeWord() {
-  const result = await wakeword.start(onWakeWordDetected);
+  const result = await wakeword.start(onWakeWordDetected, onInterruptDetected);
   if (!result.ok && !result.alreadyRunning) {
     console.warn('[AXIOM wakeword] not started:', result.error);
+  }
+}
+
+function onInterruptDetected() {
+  const { stop, isSpeaking } = require('../services/speaker.js');
+  if (!isSpeaking()) return; // only act if AXIOM is actually talking
+  console.log('[AXIOM] interrupted — stopping speech');
+  stop();
+  // Tell renderer to cancel current flow and start fresh listening
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('axiom-interrupted');
   }
 }
 
@@ -355,16 +376,36 @@ async function runDailyBriefing() {
 
   showWindow();
 
+  const memory = require('../services/memory.js');
+
+  // Same day re-open — short casual greeting, no full briefing
+  if (memory.wasOpenedToday()) {
+    console.log('[AXIOM briefing] already greeted today — short greeting');
+    try {
+      const { speak } = require('../services/speaker.js');
+      const phrases = [
+        "Hey, back again.",
+        "What's up.",
+        "I'm here.",
+        "Ready when you are.",
+        "Back at it.",
+        "Hey.",
+        "Yo, what's good.",
+      ];
+      await speak(phrases[Math.floor(Math.random() * phrases.length)]);
+    } catch {}
+    return;
+  }
+
+  memory.markOpenedToday();
+
   try {
     const { generateBriefing } = require('../services/brain.js');
     const { speak } = require('../services/speaker.js');
 
     const text = await generateBriefing();
 
-    // Display in the chat panel
     mainWindow.webContents.send('axiom-briefing', text);
-
-    // Speak it
     await speak(text);
   } catch (err) {
     console.error('[AXIOM briefing] failed:', err);
@@ -424,7 +465,7 @@ async function typeTextIntoActiveWindow(text) {
   // Temporarily step back so the previous window can reclaim focus
   mainWindow.setAlwaysOnTop(false);
   mainWindow.blur();
-  await new Promise(r => setTimeout(r, 450));
+  await new Promise(r => setTimeout(r, 650)); // longer settle so target window fully regains focus
 
   const { exec: execCmd } = require('child_process');
   const tmpFile = require('path').join(require('os').tmpdir(), `axiom-type-${Date.now()}.ps1`);
@@ -438,9 +479,9 @@ async function typeTextIntoActiveWindow(text) {
     `Add-Type -AssemblyName System.Windows.Forms`,
     `$prev = [System.Windows.Forms.Clipboard]::GetText()`,
     `[System.Windows.Forms.Clipboard]::SetText($text)`,
-    `Start-Sleep -Milliseconds 80`,
-    `[System.Windows.Forms.SendKeys]::SendWait('^v')`,
     `Start-Sleep -Milliseconds 250`,
+    `[System.Windows.Forms.SendKeys]::SendWait('^v')`,
+    `Start-Sleep -Milliseconds 400`,
     `if ($prev) { [System.Windows.Forms.Clipboard]::SetText($prev) } else { [System.Windows.Forms.Clipboard]::Clear() }`,
   ].join('\r\n');
 
@@ -624,6 +665,28 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       const errReply = `Hmm, I tried but it didn't work. ${actionResult.error || 'Windows blocked the command.'}`;
       lastAxiomResponse = errReply;
       return { speech: errReply, needsReply: false };
+    }
+
+    // Environment actions that return list data — build spoken reply
+    const ENV_LIST_ACTIONS = new Set(['bt_list', 'wifi_list', 'audio_list']);
+    if (ENV_LIST_ACTIONS.has(result.action.type)) {
+      const items = actionResult.devices || actionResult.networks || [];
+      const listSpeech = items.length
+        ? `${items.slice(0, 6).join(', ')}.`
+        : 'Nothing found.';
+      const prefix = result.action.type === 'bt_list'    ? 'Bluetooth devices: '
+                   : result.action.type === 'wifi_list'  ? 'Available networks: '
+                   : 'Audio devices: ';
+      const speech = prefix + listSpeech;
+      lastAxiomResponse = speech;
+      return { speech, needsReply: false };
+    }
+
+    // audio_switch may return a note
+    if (result.action.type === 'audio_switch' && actionResult.note) {
+      const speech = actionResult.note;
+      lastAxiomResponse = speech;
+      return { speech, needsReply: false };
     }
   }
 

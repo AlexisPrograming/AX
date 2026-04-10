@@ -7,7 +7,7 @@ const APP_MAP = {
   'vscode':         'code',
   'vs code':        'code',
   'visual studio code': 'code',
-  'claude':         'start claude',
+  'claude':         'powershell -NoProfile -WindowStyle Hidden -Command "$p=\'$env:LOCALAPPDATA\\AnthropicClaude\\claude.exe\';if(Test-Path $p){Start-Process $p}else{$p2=\'$env:LOCALAPPDATA\\Programs\\claude\\claude.exe\';if(Test-Path $p2){Start-Process $p2}else{Start-Process \'claude\'}}"',
   'chrome':         'start chrome',
   'google chrome':  'start chrome',
   'browser':        'start chrome',
@@ -163,6 +163,27 @@ async function executeAction(action) {
     case 'spotify_current':
       // Handled by brain.js — nothing to do here
       return { success: true };
+
+    case 'system_stats':
+      // Handled by brain.js — nothing to do here
+      return { success: true };
+
+    // ── Environment / hardware control ──────────────────────
+    case 'bt_on':
+    case 'bt_off':
+    case 'bt_list':
+    case 'device_disable':
+    case 'device_enable':
+    case 'wifi_on':
+    case 'wifi_off':
+    case 'wifi_list':
+    case 'wifi_connect':
+    case 'display_off':
+    case 'brightness':
+    case 'audio_list':
+    case 'audio_switch':
+    case 'usb_eject':
+      return require('./environment-control.js').executeEnvironmentAction(action);
 
     default:
       return { success: false, error: `Unknown action type: ${action.type}` };

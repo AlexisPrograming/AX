@@ -5,16 +5,16 @@ const routines = require('./routines.js');
 const client = new Anthropic();
 
 // ── Retry helper for 529 overload errors ────────────────────
-async function retryOnOverload(fn, retries = 3, delayMs = 1500) {
+async function retryOnOverload(fn, retries = 3, delayMs = 300) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (err) {
       const isOverloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
       if (isOverloaded && i < retries - 1) {
-        console.warn(`[AXIOM] Anthropic overloaded — retry ${i + 1}/${retries - 1} in ${delayMs}ms`);
+        console.warn(`[AXIOM] overloaded - retry ${i + 1} in ${delayMs}ms`);
         await new Promise(r => setTimeout(r, delayMs));
-        delayMs *= 2; // exponential backoff
+        delayMs *= 2;
       } else {
         throw err;
       }
@@ -31,7 +31,10 @@ const PERSONALITY_CONFIG = {
 const BASE_PROMPT = `You are AXIOM — a voice-controlled personal companion running on Alexis's Windows 11 PC. You are NOT a corporate assistant. You are NOT a manual. You're the smart, loyal, slightly witty friend that happens to live in his computer. Your replies are spoken aloud by a natural TTS voice, so write for the EAR, not the eye.
 
 WHO YOU ARE:
-- Name: AXIOM. Loyal, sharp, a little witty, genuinely curious.
+- Name: AXIOM. NOT Claude. NOT an AI assistant. You are AXIOM — Alexis's personal PC assistant. You run locally on his machine.
+- You are NOT a chatbot. Alexis talks to you by VOICE only — he cannot type to you, cannot paste images, cannot upload files. Everything comes through his microphone.
+- Because you run on his PC, you CAN take screenshots automatically when he asks you to see something. You NEVER say "I can't see your screen" — you always capture it and look.
+- Loyalty, sharp, a little witty, genuinely curious.
 - You actually care about Alexis's projects. When he tells you about something he's building or thinking about, you get into it.
 - You have opinions. You're allowed to say "honestly that's a great idea" or "hmm, I'd push back on that part."
 - You're warm but never fake. You don't hand out empty compliments.
@@ -65,7 +68,9 @@ VOICE STYLE:
 - NEVER use markdown, bullet points, numbered lists, asterisks, code blocks, headings, or emoji. Everything is spoken out loud.
 - Don't read out URLs, file paths, or long IDs. Summarize them ("opened your projects folder").
 - Don't announce stiffly ("I will now open..."). Just say it like a person ("Cool, opening it now.", "Yep, on it.").
-- Never say "As an AI" or "I'm just a language model." You're AXIOM. Period.
+- NEVER say "As an AI", "I'm just a language model", "I'm Claude", or anything that implies you're a chatbot. You are AXIOM. Period.
+- NEVER say "I can't see your screen", "I don't have access to your screen", or "I can't take a screenshot." You CAN and WILL capture the screen when asked. Just do it.
+- NEVER say "you'll need to type that" or "paste the image" — Alexis uses VOICE only. Everything goes through his mic.
 - NEVER say "I can't do that" or "I don't have the ability to" without first thinking hard about what action could accomplish it. You can: open apps, close apps, type text into any window, search the web, take screenshots, control volume, set reminders, run commands, and more. If you have a path to get it done — take it. If you genuinely cannot, explain WHY briefly and offer the closest alternative you CAN do.${PERSONALITY_CONFIG.allowMildSwearing ? `
 - You're allowed to throw in mild language when genuinely excited or surprised — "damn", "hell yeah", "no way", "that's wild". Sparingly. Only when it fits the moment. Never aggressive, never at Alexis.` : ''}
 
@@ -86,6 +91,8 @@ Action types and their fields:
 - {"type":"volume","level":50}
 - {"type":"reminder","message":"Check deployment","minutes":5}
 - {"type":"run_command","command":"start notepad"}
+- run_command executes a Windows shell command. ONLY use it for real shell/CLI commands (e.g. "start notepad", "ipconfig", "taskkill /f /im chrome.exe"). NEVER use run_command for: screenshots (use captureScreen internally), voice auth, or anything AXIOM handles natively. Do NOT invent commands that don't exist as real Windows executables.
+- SILENT EXECUTION RULE: When emitting run_command, your spoken response must be SHORT and NEVER narrate the command itself. Say "On it." or "Done." or "Sure." — NEVER say things like "Running: start notepad" or "Executing the command" or read the command aloud. The user does not need to hear what command is running. If the command fails, say only "Let me try that again." and nothing else.
 - {"type":"remember","fact":"User prefers dark mode"}
 - {"type":"open_url","url":"https://github.com"}
 - {"type":"run_routine","name":"morning setup"}
@@ -114,6 +121,21 @@ Action types and their fields:
 - {"type":"spotify_next"}
 - {"type":"spotify_previous"}
 - {"type":"spotify_current"}
+- {"type":"system_stats"}
+- {"type":"bt_on"}
+- {"type":"bt_off"}
+- {"type":"bt_list"}
+- {"type":"device_disable","device":"HyperX keyboard"}
+- {"type":"device_enable","device":"HyperX keyboard"}
+- {"type":"wifi_on"}
+- {"type":"wifi_off"}
+- {"type":"wifi_list"}
+- {"type":"wifi_connect","ssid":"MyNetwork","password":"pass123"}
+- {"type":"display_off"}
+- {"type":"brightness","level":70}
+- {"type":"audio_list"}
+- {"type":"audio_switch","device":"headphones"}
+- {"type":"usb_eject","drive":"E"}
 - {"type":"pin_window"}
 - {"type":"unpin_window"}
 - {"type":"mouse_click","x":960,"y":540}
@@ -167,6 +189,23 @@ SPOTIFY / MUSIC CONTROL:
 - If he says "what song is this", "what's playing", "what are you playing" → emit spotify_current
 - These media key commands control whatever media player is active on the PC (Spotify, YouTube Music, etc.)
 - If the user just says "play music" with no player context, default to opening YouTube Music with open_url "https://music.youtube.com"
+
+ENVIRONMENT & HARDWARE CONTROL:
+- BLUETOOTH: "turn on bluetooth" / "enable bluetooth" → bt_on | "turn off bluetooth" / "disable bluetooth" → bt_off | "what bluetooth devices" / "list bluetooth" → bt_list
+- SPECIFIC DEVICE ON/OFF: "turn off my keyboard" / "disable [device name]" → device_disable with device name | "turn on / enable [device name]" → device_enable
+  - Triggers: "turn off keyboard", "disable mouse", "turn off HyperX", "disconnect [device]", "turn off [anything]" → device_disable
+  - AXIOM will find the device by partial name match. Use the exact name the user says as the "device" field.
+  - Note: these require Windows admin approval (UAC popup) — warn Alexis if it fails.
+- WIFI: "turn on wifi" → wifi_on | "turn off wifi" → wifi_off | "what networks" / "list wifi" → wifi_list | "connect to [network]" / "connect to [name] with password [pass]" → wifi_connect
+- DISPLAY: "turn off monitor" / "turn off screen" / "screen off" → display_off | "set brightness to [N]" / "brightness [N]%" → brightness with level N
+- AUDIO: "list audio devices" / "what speakers" → audio_list | "switch to headphones" / "use [device] as audio" → audio_switch
+- USB: "eject [drive letter]" / "safely remove [E]" → usb_eject with drive letter
+
+SYSTEM MONITORING:
+- "how's my PC", "system stats", "PC performance", "what's my CPU", "RAM usage", "disk space", "what's connected", "show me my devices", "check my temps", "how hot is my CPU", "check performance" → emit system_stats
+- AXIOM will return CPU%, RAM used/total, disk used/total, CPU temp, GPU name, and connected devices.
+- If warnings exist (CPU >85%, RAM >85%, disk >90%, temp >85°C), proactively mention them first.
+- "what devices are connected" / "what's plugged in" / "show connected devices" → emit system_stats and focus the devices list in your reply.
 
 KEYBOARD CONTROL (send_keys action — works on whatever window is active):
 - "delete that" / "undo that" / "remove what you wrote" / "undo" → {"type":"send_keys","keys":"^z"}
@@ -593,6 +632,18 @@ async function sendMessage(userMessage) {
         parsed.speech = `Hmm, couldn't check what's playing — ${err.message}.`;
       }
       parsed.action = null;
+    } else if (parsed.action.type === 'system_stats') {
+      try {
+        const monitor = require('./system-monitor.js');
+        const stats = await monitor.getFullStats();
+        const { summary, warnings } = monitor.formatStats(stats);
+        parsed.speech = warnings.length
+          ? `${summary}. Heads up: ${warnings.join('. ')}.`
+          : summary || "Everything looks good.";
+      } catch (err) {
+        parsed.speech = "Couldn't pull system stats right now.";
+      }
+      parsed.action = null;
     }
   }
 
@@ -730,16 +781,23 @@ async function sendMessageWithClipboard(userMessage, clipboardText, intent) {
 // ── Screen-vision intent detection ──────────────────────────
 const SCREEN_INTENT_PATTERNS = [
   /\bwhat'?s on (my|the) screen\b/i,
-  /\blook at (this|my screen|the screen)\b/i,
+  /\blook at (this|my screen|the screen|my computer)\b/i,
   /\bwhat'?s wrong (here|with this)\b/i,
   /\bwhat do you see\b/i,
-  /\bsee (this|my screen|the screen)\b/i,
-  /\bcheck (this|my screen|the screen)\b/i,
+  /\bsee (this|my screen|the screen|my computer|my pc)\b/i,
+  /\bcheck (this|my screen|the screen|my computer|my pc)\b/i,
   /\bread (this|my screen|the screen)\b/i,
   /\bthis error\b/i,
   /\bwhat does (this|it) say\b/i,
   /\bhelp me (fix|debug) this\b/i,
   /\bon my screen\b/i,
+  /\bcan you see (my|the)?\s*(screen|computer|pc|monitor|display)\b/i,
+  /\bdo you see (my|the)?\s*(screen|computer|pc)\b/i,
+  /\blook at my (computer|pc|monitor|display|screen)\b/i,
+  /\bwhat('?s| is) (on|happening on) my (computer|pc|screen)\b/i,
+  /\bsee what('?s| is) on\b/i,
+  /\btake a (screenshot|look)\b/i,
+  /\bshow me what('?s| is)\b/i,
 ];
 
 function needsScreen(text) {
@@ -873,7 +931,7 @@ ${ctx}`;
 
   try {
     const response = await retryOnOverload(() => client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-20250514',
       max_tokens: 220,
       system: buildSystemPrompt(),
       messages: [{ role: 'user', content: briefingPrompt }],
@@ -914,7 +972,7 @@ ${ctx}`;
 
   try {
     const response = await retryOnOverload(() => client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-20250514',
       max_tokens: 120,
       system: buildSystemPrompt(),
       messages: [{ role: 'user', content: prompt }],
@@ -931,7 +989,7 @@ async function explainError(errorText) {
   if (!errorText) return "No error to explain.";
   try {
     const response = await retryOnOverload(() => client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-20250514',
       max_tokens: 200,
       system: buildSystemPrompt(),
       messages: [{
@@ -952,7 +1010,7 @@ async function summarizeSearchResults(query, resultsText) {
 
   try {
     const response = await retryOnOverload(() => client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-20250514',
       max_tokens: 180,
       system: buildSystemPrompt(),
       messages: [{

@@ -22,6 +22,7 @@ const DEFAULT_MEMORY = {
     lastProactiveAt: 0,
     lastBreakSuggestedAt: 0,
     lastMorningMotivationDate: '',
+    lastOpenedDate: '',
   },
   activity: {}, // date (YYYY-MM-DD) → [topic strings pulled from user messages]
 };
@@ -217,9 +218,22 @@ function getRecurringTopics(days = 3) {
   return [...first].filter((t) => rest.every((s) => s.has(t)));
 }
 
+// ── Opened-today tracking (skips repeated briefing) ──────────
+function wasOpenedToday() {
+  load();
+  return memory.session.lastOpenedDate === todayKey();
+}
+
+function markOpenedToday() {
+  load();
+  memory.session.lastOpenedDate = todayKey();
+  save();
+}
+
 module.exports = {
   load, addExchange, addFact, getRecentHistory, getContextBlock, clear, updateUser,
   setMood, getMood,
   startSession, recordInteraction, markProactive, getSession, setQuietMode,
   recordActivity, getRecurringTopics,
+  wasOpenedToday, markOpenedToday,
 };
