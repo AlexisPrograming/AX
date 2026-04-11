@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('axiom', {
   sendToClaudeWithScreen: (text, base64) =>
     ipcRenderer.invoke('send-to-claude-with-screen', { text, base64 }),
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
-  transcribeAudio: (arrayBuffer) => ipcRenderer.invoke('transcribe-audio', arrayBuffer),
+  transcribeAudio: (arrayBuffer, isWav) => ipcRenderer.invoke('transcribe-audio', arrayBuffer, isWav),
   speakText: (text) => ipcRenderer.invoke('speak-text', text),
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   runCommand: (command) => ipcRenderer.invoke('run-command', command),

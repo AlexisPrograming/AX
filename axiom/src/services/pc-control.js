@@ -238,7 +238,15 @@ function closeApp(appName) {
     return Promise.resolve({ success: false, error: `"${proc}" is a protected system process and cannot be closed.` });
   }
 
-  return run(`taskkill /IM "${proc}" /F`);
+  return run(`taskkill /IM "${proc}" /F`).then(result => {
+    if (!result.success) {
+      const msg = (result.error || '').toLowerCase();
+      if (msg.includes('not found') || msg.includes('no se encontró') || msg.includes('no running instance')) {
+        return { success: false, error: `${appName} doesn't seem to be open right now.` };
+      }
+    }
+    return result;
+  });
 }
 
 function openApp(appName) {

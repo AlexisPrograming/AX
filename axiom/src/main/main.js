@@ -273,6 +273,7 @@ app.whenReady().then(() => {
 
   if (launchedAtLogin) {
     showFirstRunNotification();
+    showWindow();
   } else if (store.get('firstRun')) {
     showFirstRunNotification();
     showWindow();
@@ -774,7 +775,7 @@ ipcMain.handle('send-to-claude-with-screen', async (_event, { text, base64 }) =>
   }
 });
 
-ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
+ipcMain.handle('transcribe-audio', async (_event, arrayBuffer, isWav = true) => {
   try {
     if (!arrayBuffer || arrayBuffer.byteLength < 1000) {
       return { error: 'no-speech' };
@@ -788,7 +789,9 @@ ipcMain.handle('transcribe-audio', async (_event, arrayBuffer) => {
       return { error: 'voice-not-authorized', score: auth.score };
     }
 
-    const file = await toFile(buffer, 'audio.wav', { type: 'audio/wav' });
+    const audioName = isWav ? 'audio.wav' : 'audio.webm';
+    const audioType = isWav ? 'audio/wav' : 'audio/webm';
+    const file = await toFile(buffer, audioName, { type: audioType });
 
     const result = await getOpenAI().audio.transcriptions.create({
       file,

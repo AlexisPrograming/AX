@@ -426,10 +426,10 @@ async function listen() {
 
     setState('thinking');
     // Convert to WAV before sending — Whisper rejects malformed WebM containers
-    let buf;
+    let buf, isWav = true;
     try { buf = await toWav(rawBuf); }
-    catch (_) { buf = rawBuf; } // fall back to raw if decode fails
-    const result = await window.axiom.transcribeAudio(buf);
+    catch (_) { buf = rawBuf; isWav = false; } // fall back to raw webm if decode fails
+    const result = await window.axiom.transcribeAudio(buf, isWav);
     if (cancelled) return;
 
     if (result.error === 'no-speech' || !result.text?.trim()) {

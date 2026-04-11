@@ -34,7 +34,9 @@
       "Bash(powershell.exe -NoProfile -Command \"Set-Location 'D:\\\\AX\\\\axiom'; npm run build 2>&1 | Select-Object -Last 4\")",
       "Bash(dir D:\\\\AX\\\\voice-auth /b)",
       "Bash(dir D:\\\\AX\\\\axiom /b)",
-      "Bash(git check-ignore:*)"
+      "Bash(git check-ignore:*)",
+      "Bash(wc -l /c/AX/.claude/worktrees/clever-hopper/axiom/src/services/*.js)",
+      "Bash(npm --version)"
     ]
   },
   "enableAllProjectMcpServers": true,
