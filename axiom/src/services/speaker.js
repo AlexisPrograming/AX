@@ -18,16 +18,21 @@ param([string]$FilePath)
 Add-Type -AssemblyName presentationCore
 $player = New-Object System.Windows.Media.MediaPlayer
 $player.Open([Uri]$FilePath)
-Start-Sleep -Milliseconds 300
+Start-Sleep -Milliseconds 400
 $player.Play()
 $waited = 0
-while (-not $player.NaturalDuration.HasTimeSpan -and $waited -lt 5000) {
-    Start-Sleep -Milliseconds 50
-    $waited += 50
+while (-not $player.NaturalDuration.HasTimeSpan -and $waited -lt 15000) {
+    Start-Sleep -Milliseconds 100
+    $waited += 100
 }
 if ($player.NaturalDuration.HasTimeSpan) {
-    $ms = [int]$player.NaturalDuration.TimeSpan.TotalMilliseconds + 200
+    $ms = [int]$player.NaturalDuration.TimeSpan.TotalMilliseconds + 500
     Start-Sleep -Milliseconds $ms
+} else {
+    # Duration never resolved — wait a safe fallback based on file size
+    $size = (Get-Item $FilePath).Length
+    $fallbackMs = [int]($size / 16000 * 1000) + 2000
+    Start-Sleep -Milliseconds $fallbackMs
 }
 $player.Stop()
 $player.Close()
@@ -124,7 +129,7 @@ function playAudio(filePath) {
     playbackProcess = execFile(
       'powershell',
       ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', playScriptPath, '-FilePath', filePath],
-      { timeout: 60000, windowsHide: true },
+      { timeout: 600000, windowsHide: true },
       (err) => {
         playbackProcess = null;
         if (err && err.killed) return resolve(); // killed by stop()

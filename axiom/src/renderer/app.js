@@ -420,6 +420,9 @@ async function listen() {
   cancelled = false;
   setState('listening');
 
+  // Flag set inside try — acted on in finally to avoid busy race condition
+  let shouldRelisten = false;
+
   try {
     const rawBuf = await recordUntilSilence();
     if (cancelled) return;
@@ -434,21 +437,18 @@ async function listen() {
 
     if (result.error === 'no-speech' || !result.text?.trim()) {
       setState('ready');
-      busy = false;
       return;
     }
     if (result.error === 'voice-not-authorized') {
-      // Unknown voice — pulse red briefly then go silent
       orb.setState('error');
       await window.axiom.speakText('Voice not recognized.');
-      setTimeout(() => { setState('ready'); busy = false; }, 2000);
+      setState('ready');
       return;
     }
     if (result.error) {
       showSubtitle(`Transcription error: ${result.error}`);
       setState('error');
       setTimeout(() => setState('ready'), 3000);
-      busy = false;
       return;
     }
 
@@ -478,11 +478,12 @@ async function listen() {
     if (cancelled) return;
 
     // Auto-reopen mic if AXIOM asked a question or needs more input
+    // IMPORTANT: do NOT set busy=false here — let finally handle it exclusively
+    // to avoid a race where finally overwrites the next listen()'s busy=true
     if (needsReply) {
-      busy = false;
+      shouldRelisten = true;
       setState('listening');
-      await new Promise(r => setTimeout(r, 350));
-      if (!cancelled) { listen(); return; }
+      return;
     }
 
     setState('ready');
@@ -492,7 +493,12 @@ async function listen() {
     setState('error');
     setTimeout(() => setState('ready'), 3000);
   } finally {
+    // Single authoritative place that clears busy
     busy = false;
+    // Trigger follow-up listen AFTER busy is cleared — no race condition
+    if (shouldRelisten && !cancelled) {
+      setTimeout(() => { if (!busy) listen(); }, 350);
+    }
   }
 }
 

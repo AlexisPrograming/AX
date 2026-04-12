@@ -79,6 +79,10 @@ When the user asks you to do something on the PC, respond with EXACTLY this form
 Line 1: A JSON action object (one line, no extra text)
 Line 2+: Your spoken response (short, natural, no markdown)
 
+MULTI-STEP COMMANDS — when Alexis asks you to chain two or more PC actions in one request ("open Chrome and search YouTube", "close Spotify and open VS Code", "open Chrome and go to GitHub"), emit a JSON ARRAY on Line 1 instead of a single object:
+[{"type":"open_app","app":"chrome"},{"type":"search_web","query":"YouTube"}]
+Rules: max 3 actions per array, all on ONE line, no extra text on that line. Only use an array when the request clearly chains 2+ separate PC actions. Single actions always use a single JSON object, not an array.
+
 Action types and their fields:
 - {"type":"open_app","app":"chrome"}
 - {"type":"close_app","app":"chrome"}
@@ -477,18 +481,31 @@ function getMessages() {
   return sessionMessages;
 }
 
+// ── Continue / resume detection ─────────────────────────────
+let lastSpeechText = '';
+
+const CONTINUE_PATTERNS = /\b(continue|keep going|go on|carry on|finish|finish that|keep talking|sigue|continúa|continua|sigue hablando|termina|where were you|where did you leave off)\b/i;
+
 async function sendMessage(userMessage) {
   const text = (userMessage || '').trim();
   if (!text) return { speech: "I didn't catch that. Could you say it again?", action: null };
 
   const messages = getMessages();
   const contextTag = buildContextTag(text);
+
+  // If user wants AXIOM to continue where it left off, inject the last speech as context
+  let userContent = text;
+  if (CONTINUE_PATTERNS.test(text) && lastSpeechText) {
+    const snippet = lastSpeechText.length > 400 ? lastSpeechText.slice(0, 400) + '...' : lastSpeechText;
+    userContent = `[You were previously saying: "${snippet}" — Alexis is asking you to continue from exactly where you stopped. Resume naturally mid-thought, do NOT restart from the beginning.]\n${text}`;
+  }
+
   // Prepend the (private) context tag so Claude can read mood/time without the user ever seeing it
-  messages.push({ role: 'user', content: `${contextTag}\n${text}` });
+  messages.push({ role: 'user', content: `${contextTag}\n${userContent}` });
 
   const response = await retryOnOverload(() => client.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 400,
+    max_tokens: 1200,
     system: buildSystemPrompt(),
     messages,
   }));
@@ -654,6 +671,9 @@ async function sendMessage(userMessage) {
   // Persist exchange to disk
   memory.addExchange(text, parsed.speech);
 
+  // Store for continue/resume detection
+  if (parsed.speech) lastSpeechText = parsed.speech;
+
   return parsed;
 }
 
@@ -680,6 +700,19 @@ function parseResponse(reply) {
   // Search every line for an embedded JSON action object
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
+
+    // Case 0: JSON array — multi-action sequence [{...},{...}]
+    if (line.startsWith('[') && line.endsWith(']')) {
+      try {
+        const actions = JSON.parse(line);
+        if (Array.isArray(actions) && actions.length >= 2 && actions.every(a => a && a.type)) {
+          const rawSpeech = [...lines.slice(0, i), ...lines.slice(i + 1)].join(' ').trim() || 'Done.';
+          const speech = rawSpeech.replace(/\[NEEDS_REPLY\]/g, '').trim();
+          const needsReply = NEEDS_REPLY_PATTERNS.some(p => p.test(rawSpeech));
+          return { speech, action: actions[0], actions, needsReply };
+        }
+      } catch { /* not a valid JSON array */ }
+    }
 
     // Case A: entire line is JSON — {"type":"..."}
     if (line.startsWith('{') && line.endsWith('}')) {

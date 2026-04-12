@@ -590,6 +590,61 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
 
   const result = await sendMessage(message);
 
+  // ── Multi-action: execute actions sequentially ───────────────
+  if (result.actions && result.actions.length > 1) {
+    const { executeAction } = require('../services/pc-control.js');
+    const MULTI_DELAYS = { open_app: 2500, close_app: 1000, run_command: 1500 };
+    const MULTI_MOUSE  = new Set(['mouse_click','mouse_right_click','mouse_double_click','mouse_scroll','mouse_move']);
+
+    for (let i = 0; i < result.actions.length; i++) {
+      const act = result.actions[i];
+
+      if (act.type === 'type_text') {
+        await typeTextIntoActiveWindow(act.text || '');
+      } else if (act.type === 'send_keys' || MULTI_MOUSE.has(act.type)) {
+        if (MULTI_MOUSE.has(act.type)) {
+          const { scaleFactor } = screen.getPrimaryDisplay();
+          act.scaleFactor = scaleFactor;
+        }
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.blur();
+        await new Promise(r => setTimeout(r, 250));
+        await executeAction(act);
+        mainWindow.setAlwaysOnTop(true, windowPinned ? 'screen-saver' : 'floating');
+      } else if (act.type === 'web_search') {
+        // Silent search in multi-action context — result folds into AXIOM's spoken line
+        try {
+          const { search } = require('../services/search.js');
+          await search(act.query, act.hint || 'general');
+        } catch {}
+      } else if (act.type === 'pin_window') {
+        windowPinned = true;
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      } else if (act.type === 'unpin_window') {
+        windowPinned = false;
+        mainWindow.setAlwaysOnTop(true, 'floating');
+      } else if (act.type === 'brainstorm_start') {
+        // Not meaningful in multi-action — skip
+      } else {
+        const ar = await executeAction(act);
+        if (!ar.success) {
+          const errReply = `Started, but hit a snag on step ${i + 1}. ${ar.error || ''}`.trim();
+          lastAxiomResponse = errReply;
+          return { speech: errReply, needsReply: false };
+        }
+      }
+
+      // Wait between actions (not after the last one)
+      if (i < result.actions.length - 1) {
+        const delay = MULTI_DELAYS[act.type] ?? 700;
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    lastAxiomResponse = result.speech;
+    return { speech: result.speech, needsReply: result.needsReply || false };
+  }
+
   if (result.action) {
     // Brainstorm: tell renderer to enter extended recording mode
     if (result.action.type === 'brainstorm_start') {
