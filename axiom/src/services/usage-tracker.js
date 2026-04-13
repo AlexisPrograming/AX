@@ -162,6 +162,20 @@ function exeToLabel(exe) {
   return MAP[exe] || exe;
 }
 
+/**
+ * Returns the timestamp (ms) of the most recent entry for the given exe,
+ * or null if it has never been seen.
+ */
+function getLastSeenTime(exe) {
+  if (!data) return null;
+  const key = exe.toLowerCase();
+  let latest = null;
+  for (const e of data.entries) {
+    if (e.exe === key && (latest === null || e.ts > latest)) latest = e.ts;
+  }
+  return latest;
+}
+
 function start() {
   load();
   // First poll immediately, then on interval
@@ -174,4 +188,4 @@ function stop() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-module.exports = { start, stop, getTopApps, getTopUrls, getSummary, getFavorites };
+module.exports = { start, stop, getTopApps, getTopUrls, getSummary, getFavorites, getLastSeenTime };

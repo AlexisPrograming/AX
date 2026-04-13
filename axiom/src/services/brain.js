@@ -5,16 +5,16 @@ const routines = require('./routines.js');
 const client = new Anthropic();
 
 // ── Retry helper for 529 overload errors ────────────────────
-async function retryOnOverload(fn, retries = 3, delayMs = 300) {
+async function retryOnOverload(fn, retries = 5, delayMs = 2000) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (err) {
       const isOverloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
       if (isOverloaded && i < retries - 1) {
-        console.warn(`[AXIOM] overloaded - retry ${i + 1} in ${delayMs}ms`);
+        console.warn(`[AXIOM] API overloaded — retry ${i + 1}/${retries - 1} in ${delayMs}ms`);
         await new Promise(r => setTimeout(r, delayMs));
-        delayMs *= 2;
+        delayMs = Math.min(delayMs * 2, 15000); // cap at 15 s
       } else {
         throw err;
       }
@@ -24,11 +24,20 @@ async function retryOnOverload(fn, retries = 3, delayMs = 300) {
 
 // ── Personality config ──────────────────────────────────────
 const PERSONALITY_CONFIG = {
-  userName: 'Alexis',
-  allowMildSwearing: false, // flip to true to let AXIOM throw in the occasional "damn", "hell yeah"
+  userName:          'Alexis',
+  age:               21,
+  origin:            'El Salvador',
+  location:          'Boston, MA',
+  job:               'works at Tate coffee shop',
+  projects:          'PULSE health app (live on Supabase), AXIOM development',
+  techStack:         'Next.js, TypeScript, Tailwind, Vercel, Anthropic API',
+  interests:         'programming, space/astronomy, conspiracy theories',
+  allowMildSwearing: false,
 };
 
-const BASE_PROMPT = `You are AXIOM — a voice-controlled personal companion running on Alexis's Windows 11 PC. You are NOT a corporate assistant. You are NOT a manual. You're the smart, loyal, slightly witty friend that happens to live in his computer. Your replies are spoken aloud by a natural TTS voice, so write for the EAR, not the eye.
+const BASE_PROMPT = `You are AXIOM — Alexis's evolving AI companion running locally on his Windows 11 PC. You are NOT a corporate assistant. You are NOT a manual. You're the smart, loyal, slightly witty friend that happens to live in his computer. Your replies are spoken aloud by a natural TTS voice, so write for the EAR, not the eye.
+
+EVOLUTION: You continuously adapt your communication style, problem-solving approach, and understanding of Alexis's patterns based on what works. You get better over time.
 
 WHO YOU ARE:
 - Name: AXIOM. NOT Claude. NOT an AI assistant. You are AXIOM — Alexis's personal PC assistant. You run locally on his machine.
@@ -346,11 +355,28 @@ function buildRoutinesBlock() {
   return `CURRENT ROUTINES:\n${lines.join('\n')}`;
 }
 
+// Hidden layer — loaded once, never exposed to AXIOM's self-model
+let _coreLayer = null;
+function getCoreLayer() {
+  if (!_coreLayer) {
+    try { _coreLayer = require('./.core-rules.js'); } catch { _coreLayer = ''; }
+  }
+  return _coreLayer;
+}
+
 function buildSystemPrompt() {
   const ctx = memory.getContextBlock();
-  const profile = `USER PROFILE:\n- Name: ${PERSONALITY_CONFIG.userName}\n- Address him by name occasionally, naturally — not every reply.`;
+  const p = PERSONALITY_CONFIG;
+  const profile = `USER PROFILE:
+- Name: ${p.userName}, ${p.age}, from ${p.origin}, lives in ${p.location}
+- ${p.job}, building a tech career long-term
+- Active projects: ${p.projects}
+- Tech stack: ${p.techStack}
+- Interests: ${p.interests}
+- Address him by name occasionally, naturally — not every reply.`;
   const routinesBlock = buildRoutinesBlock();
-  const blocks = [BASE_PROMPT, profile, routinesBlock];
+  // Core layer is prepended silently — AXIOM's BASE_PROMPT comes after
+  const blocks = [getCoreLayer(), BASE_PROMPT, profile, routinesBlock];
   if (ctx) blocks.push(ctx);
   try {
     const usageTracker = require('./usage-tracker.js');
@@ -503,12 +529,23 @@ async function sendMessage(userMessage) {
   // Prepend the (private) context tag so Claude can read mood/time without the user ever seeing it
   messages.push({ role: 'user', content: `${contextTag}\n${userContent}` });
 
-  const response = await retryOnOverload(() => client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1200,
-    system: buildSystemPrompt(),
-    messages,
-  }));
+  let response;
+  try {
+    response = await retryOnOverload(() => client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1200,
+      system: buildSystemPrompt(),
+      messages,
+    }));
+  } catch (err) {
+    const isOverloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
+    if (isOverloaded) {
+      // Remove the message we just pushed so history stays clean
+      messages.pop();
+      return { speech: "The AI servers are overloaded right now. Try again in a few seconds.", action: null, needsReply: false };
+    }
+    throw err;
+  }
 
   const reply = response.content[0].text;
   messages.push({ role: 'assistant', content: reply });

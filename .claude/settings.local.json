@@ -36,7 +36,8 @@
       "Bash(dir D:\\\\AX\\\\axiom /b)",
       "Bash(git check-ignore:*)",
       "Bash(wc -l /c/AX/.claude/worktrees/clever-hopper/axiom/src/services/*.js)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(schtasks /query /tn \"AXIOM Autostart\" /fo LIST)"
     ]
   },
   "enableAllProjectMcpServers": true,

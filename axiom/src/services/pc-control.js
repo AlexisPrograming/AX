@@ -406,6 +406,16 @@ const BLOCKED_PATTERNS = [
   /\bicacls\b/i,
   /\bbcdedit\b/i,
   /\bbootrec\b/i,
+  // ── AXIOM source protection — AXIOM can never modify its own code ──
+  /axiom\\src/i,
+  /axiom\/src/i,
+  /brain\.js/i,
+  /main\.js/i,
+  /preload\.js/i,
+  /speaker\.js/i,
+  /wakeword\.js/i,
+  /pc-control\.js/i,
+  /\.core-rules\.js/i,
 ];
 
 function runSafe(command) {

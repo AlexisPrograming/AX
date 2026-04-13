@@ -63,7 +63,7 @@ shell.CurrentDirectory = "$axiomDir"
 shell.Run "cmd /c ""npx electron . --hidden""", 0, False
 "@
 
-Set-Content -Path $launchVbs -Value $vbsContent -Encoding UTF8
+Set-Content -Path $launchVbs -Value $vbsContent -Encoding Default
 Write-Host "  Launcher created: $launchVbs" -ForegroundColor Cyan
 
 # ── Register the scheduled task ────────────────────────────────
@@ -80,7 +80,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 0)   # no time limit
+    -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
+    -Priority 0   # 0 = highest priority - AXIOM launches before other startup apps
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId $currentUser `

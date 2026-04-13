@@ -11,6 +11,8 @@ const terminalWatcher = require('../services/terminal-watcher.js');
 const clipboardService = require('../services/clipboard.js');
 const usageTracker    = require('../services/usage-tracker.js');
 const voiceAuth       = require('../services/voice-auth.js');
+const windowMonitor   = require('../services/window-monitor.js');
+const activityTracker = require('../services/activity-tracker.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -34,6 +36,12 @@ let mainWindow = null;
 let tray = null;
 let lastAxiomResponse = null;
 let windowPinned = false;
+let pendingWindowSuggestion = null;  // { exe, label, all } — set when AXIOM asks to close an app
+
+// Yes/no/never patterns for window-close responses
+const CLOSE_YES    = /^\s*(yes|yeah|yep|sure|do it|close it|close them|close all|ok|okay|si|sí|dale|claro|cierra|cerralos)\s*[.!]?\s*$/i;
+const CLOSE_NO     = /^\s*(no|nope|don.t|not now|keep it|leave it|cancel|never mind|no thanks|nah|déjalo|no lo cierres)\s*[.!]?\s*$/i;
+const CLOSE_NEVER  = /\b(never|don.t (ever )?suggest|stop suggesting|always keep|whitelist|protect|nunca)\b/i;
 
 
 const launchedAtLogin = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
@@ -290,6 +298,29 @@ app.whenReady().then(() => {
   // Usage tracker — starts logging active window every 60 s
   usageTracker.start();
 
+  // Window activity monitor — suggests closing idle high-RAM apps
+  windowMonitor.start(async (suggestion) => {
+    const { speak } = require('../services/speaker.js');
+    pendingWindowSuggestion = suggestion;
+
+    // Show AXIOM and speak the suggestion
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      revealInPlace();
+      mainWindow.webContents.send('axiom-proactive', suggestion.speech);
+    }
+
+    // Speak — then activate listening so user can answer yes/no
+    try {
+      await speak(suggestion.speech);
+    } catch {}
+
+    // Only start listening if the suggestion is still pending
+    // (user didn't already answer via another path)
+    if (pendingWindowSuggestion && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('wake-word-activated');
+    }
+  }, usageTracker);
+
   // Proactive companion loop
   try {
     const { speak } = require('../services/speaker.js');
@@ -452,6 +483,7 @@ app.on('will-quit', async () => {
   pomodoro.shutdown();
   terminalWatcher.shutdown();
   usageTracker.stop();
+  windowMonitor.stop();
 });
 
 app.on('window-all-closed', (e) => {
@@ -583,6 +615,47 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
   const { speak } = require('../services/speaker.js');
 
   proactive.recordInteraction();
+
+  // ── Window-close suggestion response ─────────────────────
+  if (pendingWindowSuggestion) {
+    const suggestion = pendingWindowSuggestion;
+
+    if (CLOSE_NEVER.test(message)) {
+      pendingWindowSuggestion = null;
+      activityTracker.protect(suggestion.exe);
+      activityTracker.recordDecision(suggestion.exe, false);
+      const reply = `Got it — I'll never suggest closing ${suggestion.label} again.`;
+      lastAxiomResponse = reply;
+      return { speech: reply, needsReply: false };
+    }
+
+    if (CLOSE_YES.test(message)) {
+      pendingWindowSuggestion = null;
+      activityTracker.recordDecision(suggestion.exe, true);
+      const toClose = suggestion.all && suggestion.all.length >= 3 ? suggestion.all : [suggestion];
+      const labels  = toClose.map(a => a.label).join(', ');
+      for (const app of toClose) {
+        try { await executeAction({ type: 'close_app', app: app.label }); } catch {}
+        activityTracker.recordDecision(app.exe, true);
+      }
+      const reply = toClose.length > 1
+        ? `Closed ${labels}. That freed up some RAM.`
+        : `${suggestion.label} is closed.`;
+      lastAxiomResponse = reply;
+      return { speech: reply, needsReply: false };
+    }
+
+    if (CLOSE_NO.test(message)) {
+      pendingWindowSuggestion = null;
+      activityTracker.recordDecision(suggestion.exe, false);
+      const reply = `No problem, leaving ${suggestion.label} open.`;
+      lastAxiomResponse = reply;
+      return { speech: reply, needsReply: false };
+    }
+
+    // User said something else — clear the pending suggestion and fall through
+    pendingWindowSuggestion = null;
+  }
 
   // ── Clipboard intent check ────────────────────────────────
   const clipboardReply = await handleClipboardIntent(message);
