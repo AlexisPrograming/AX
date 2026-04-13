@@ -49,8 +49,18 @@ class ParticleOrb {
 
   setPaused(p) {
     this.paused = p;
-    // Resume immediately — the loop checks this flag each frame
-    if (!p && !this.rafId) this.start();
+    clearTimeout(this._pauseGuard);
+    if (p) {
+      // Safety: auto-resume after 1.5 s in case the 'moved' event never fires
+      this._pauseGuard = setTimeout(() => {
+        if (this.paused) {
+          this.paused = false;
+          if (!this.rafId) this.start();
+        }
+      }, 1500);
+    } else {
+      if (!this.rafId) this.start();
+    }
   }
 
   start() {
@@ -150,13 +160,16 @@ class ParticleOrb {
     });
     ctx.shadowBlur = 0;
 
-    // Core glow when active
+    // Core glow when active — circular fill only, never the full canvas rect
     if (amp > 0.06) {
-      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7);
+      const glowR = r * 1.35;
+      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
       grd.addColorStop(0, `rgba(0,255,120,${(amp * 0.13).toFixed(3)})`);
       grd.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = grd;
-      ctx.fillRect(0, 0, W, H);
+      ctx.beginPath();
+      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 }
@@ -187,7 +200,7 @@ let rafId         = null;
 let audioChunks   = [];
 
 const SILENCE_MS        = 1500;
-const SILENCE_THRESHOLD = 0.012;
+const SILENCE_THRESHOLD = 0.025;
 const MIN_SPEECH_MS     = 400;
 const BS_SILENCE_MS     = 5000;
 const BS_MAX_MS         = 180000;
@@ -473,7 +486,7 @@ async function listen() {
 
     if (cancelled) return;
     showSubtitle(reply);
-    setState('speaking');
+    setState('thinking');
     await window.axiom.speakText(reply);
     if (cancelled) return;
 
@@ -504,9 +517,26 @@ async function listen() {
 
 // ── Interactions ──────────────────────────────────────────────
 
+// ── Click-through for transparent corners ─────────────────────
+// Track mouse position and tell Electron to ignore events outside the orb circle.
+// This makes the square corners truly transparent — clicks pass through to windows below.
+const HIT_RADIUS = orb.BASE_R * 1.45; // slightly larger than visual ball for easy clicking
+window.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const dx = e.clientX - (rect.left + rect.width  / 2);
+  const dy = e.clientY - (rect.top  + rect.height / 2);
+  const inside = (dx * dx + dy * dy) <= HIT_RADIUS * HIT_RADIUS;
+  window.axiom.setIgnoreMouseEvents(!inside);
+});
+
 // Hold-and-drag to move window; quick release = click
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  // Extra guard: ignore if outside orb
+  const rect = canvas.getBoundingClientRect();
+  const dx = e.clientX - (rect.left + rect.width  / 2);
+  const dy = e.clientY - (rect.top  + rect.height / 2);
+  if ((dx * dx + dy * dy) > HIT_RADIUS * HIT_RADIUS) return;
   let startX = e.screenX;
   let startY = e.screenY;
   let dragging = false;
@@ -547,7 +577,6 @@ canvas.addEventListener('mousedown', (e) => {
 if (window.axiom.onWindowMoving) {
   window.axiom.onWindowMoving((moving) => {
     orb.setPaused(moving);
-    if (!moving) orb.start(); // restart the RAF loop after drag ends
   });
 }
 
@@ -589,5 +618,12 @@ if (window.axiom.onInterrupted) {
     cancelAll();
     // Short pause then start listening so user can give next command
     setTimeout(() => { if (!busy) listen(); }, 400);
+  });
+}
+
+// ── Speaking started — switch orb to speaking state when audio actually begins ──
+if (window.axiom.onSpeakingStarted) {
+  window.axiom.onSpeakingStarted(() => {
+    if (!cancelled) setState('speaking');
   });
 }

@@ -51,7 +51,7 @@ function getClient() {
   return client;
 }
 
-async function speak(text) {
+async function speak(text, onPlaybackStart) {
   if (!text || !text.trim()) return;
   if (speaking) return;
   speaking = true;
@@ -78,6 +78,9 @@ async function speak(text) {
 
     await streamToFile(audioStream, filePath);
     if (cancelled) return;
+
+    // Notify caller that audio is about to start — orb can switch to speaking now
+    if (onPlaybackStart) onPlaybackStart();
 
     await playAudio(filePath);
   } catch (err) {

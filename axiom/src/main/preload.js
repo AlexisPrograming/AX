@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('axiom', {
   onBrainstormStart: (cb) => ipcRenderer.on('brainstorm-start', (_e, mode) => cb(mode)),
   onWindowMoving: (cb) => ipcRenderer.on('window-moving', (_e, moving) => cb(moving)),
   onInterrupted: (cb) => ipcRenderer.on('axiom-interrupted', () => cb()),
+  onSpeakingStarted: (cb) => ipcRenderer.on('speaking-started', () => cb()),
   moveWindowBy: (dx, dy) => ipcRenderer.send('move-window-by', dx, dy),
+  setIgnoreMouseEvents: (ignore) => ipcRenderer.send('set-ignore-mouse-events', ignore),
   processBrainstorm: (arrayBuffer, mode) => ipcRenderer.invoke('process-brainstorm', { arrayBuffer, mode }),
 });

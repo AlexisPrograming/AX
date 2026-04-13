@@ -18,8 +18,8 @@ try {
 // ── Tuning constants ──────────────────────────────────────────
 const SAMPLE_RATE          = 16000;
 const FRAME_LENGTH         = 512;               // ~32 ms per frame
-const ENERGY_THRESHOLD     = 280;               // RMS threshold to consider as speech
-const VOICE_ONSET_FRAMES   = 5;                 // consecutive loud frames before capture starts
+const ENERGY_THRESHOLD     = 450;               // RMS threshold to consider as speech
+const VOICE_ONSET_FRAMES   = 4;                 // consecutive loud frames before capture starts
 const SILENCE_END_FRAMES   = 28;                // ~900 ms of quiet ends the segment
 const MAX_BUFFER_FRAMES    = Math.floor(SAMPLE_RATE * 4 / FRAME_LENGTH); // 4s hard cap
 const COOLDOWN_MS          = 2500;              // ignore detections within this window
@@ -144,14 +144,7 @@ async function detectLoop(onDetected) {
         if (done && !processing) {
           capturing     = false;
           silenceFrames = 0;
-
-          // Cooldown guard
-          if (Date.now() - lastDetectedAt < COOLDOWN_MS) {
-            buffer = [];
-            continue;
-          }
-
-          processing = true;
+          processing    = true;
           const captured = buffer.slice();
           buffer = [];
 
@@ -163,9 +156,12 @@ async function detectLoop(onDetected) {
               console.log('[AXIOM wakeword] heard:', JSON.stringify(text));
 
               if (text && isInterruptPhrase(text)) {
+                // Interrupts bypass cooldown — always fire immediately
                 console.log('[AXIOM wakeword] INTERRUPT detected:', JSON.stringify(text));
                 onInterrupt && onInterrupt();
               } else if (text && isWakePhrase(text)) {
+                // Wake word respects cooldown to avoid double-firing
+                if (Date.now() - lastDetectedAt < COOLDOWN_MS) return;
                 lastDetectedAt = Date.now();
                 console.log('[AXIOM wakeword] WAKE WORD DETECTED');
                 onDetected && onDetected();

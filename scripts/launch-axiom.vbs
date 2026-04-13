@@ -1,0 +1,4 @@
+Dim shell
+Set shell = CreateObject("WScript.Shell")
+shell.CurrentDirectory = "D:\AX\axiom"
+shell.Run "cmd /c ""npx electron . --hidden""", 0, False

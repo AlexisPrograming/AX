@@ -753,7 +753,11 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
 
 ipcMain.handle('speak-text', async (_event, text) => {
   const { speak } = require('../services/speaker.js');
-  return speak(text);
+  return speak(text, () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('speaking-started');
+    }
+  });
 });
 
 ipcMain.handle('stop-speaking', async () => {
@@ -894,6 +898,13 @@ ipcMain.on('window-minimize', () => {
 ipcMain.on('move-window-by', (e, dx, dy) => {
   const [x, y] = mainWindow.getPosition();
   mainWindow.setPosition(x + Math.round(dx), y + Math.round(dy));
+});
+
+ipcMain.on('set-ignore-mouse-events', (_e, ignore) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // forward:true keeps mousemove events coming so we can re-enable when cursor returns
+    mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
+  }
 });
 
 ipcMain.handle('toggle-pin', () => {
