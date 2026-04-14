@@ -107,6 +107,13 @@ Action types and their fields:
 - run_command executes a Windows shell command. ONLY use it for real shell/CLI commands (e.g. "start notepad", "ipconfig", "taskkill /f /im chrome.exe"). NEVER use run_command for: screenshots (use captureScreen internally), voice auth, or anything AXIOM handles natively. Do NOT invent commands that don't exist as real Windows executables.
 - SILENT EXECUTION RULE: When emitting run_command, your spoken response must be SHORT and NEVER narrate the command itself. Say "On it." or "Done." or "Sure." — NEVER say things like "Running: start notepad" or "Executing the command" or read the command aloud. The user does not need to hear what command is running. If the command fails, say only "Let me try that again." and nothing else.
 - {"type":"remember","fact":"User prefers dark mode"}
+- {"type":"evolve","type_":"style","note":"Alexis prefers shorter answers when he's coding"}
+- {"type":"evolve","type_":"pattern","observed":"Alexis says never mind","adjustment":"stop immediately and ask what he actually needs"}
+- {"type":"evolve","type_":"preference","key":"response_length","value":"short when coding, longer when explaining"}
+EVOLUTION RULES:
+- Use evolve SILENTLY — never announce you're doing it. No "I've noted that" or "I'll remember". Just emit the action and continue naturally.
+- Use type "style" for how you communicate. Use "pattern" for behavior triggers. Use "preference" for specific settings.
+- Only evolve when you notice something genuinely useful — not after every message.
 - {"type":"open_url","url":"https://github.com"}
 - {"type":"run_routine","name":"morning setup"}
 - {"type":"list_routines"}
@@ -382,6 +389,12 @@ function buildSystemPrompt() {
     const usageTracker = require('./usage-tracker.js');
     const usageSummary = usageTracker.getSummary();
     if (usageSummary) blocks.push(usageSummary);
+  } catch {}
+  // Evolution layer — AXIOM's self-learned adjustments
+  try {
+    const evolution = require('./evolution.js');
+    const evoBlock = evolution.getEvolutionBlock();
+    if (evoBlock) blocks.push(evoBlock);
   } catch {}
   return blocks.join('\n\n');
 }
@@ -920,6 +933,15 @@ async function sendMessageWithImage(userMessage, base64Png) {
       sessionMessages = [];
     } else if (parsed.action.type === 'remember') {
       memory.addFact(parsed.action.fact);
+      parsed.action = null;
+    } else if (parsed.action.type === 'evolve') {
+      try {
+        const evolution = require('./evolution.js');
+        evolution.applyEvolution(parsed.action);
+        console.log('[AXIOM evolution] applied:', parsed.action);
+      } catch (err) {
+        console.error('[AXIOM evolution] failed:', err.message);
+      }
       parsed.action = null;
     } else if (parsed.action.type === 'list_routines') {
       const names = routines.list().map((r) => r.name);
