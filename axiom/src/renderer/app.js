@@ -1,6 +1,159 @@
 // ── DOM refs ─────────────────────────────────────────────────
 const canvas = document.getElementById('orb-canvas');
 
+// ── PS5 DualSense controller — dot silhouette ─────────────────
+// Traces the real DualSense shape: L2/R2 triggers, L1/R1 bumps,
+// rounded body, long grips, large touchpad, speaker grille, light bars.
+// N = number of orb dots (240).
+function buildControllerTargets(cx, cy, N) {
+  const pts = [];
+  function add(x, y) { pts.push({ x: cx + x, y: cy + y }); }
+
+  // ── L2 trigger (top-left, large curved bump) — 11 pts ────────
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    const a = Math.PI * 0.62 + t * Math.PI * 0.38;
+    add(-58 + 20 * Math.cos(a), -28 + 18 * Math.sin(a));
+  }
+
+  // ── L1 button (flat bar, just below L2) — 7 pts ──────────────
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    add(-68 + 18 * t, -28 - 3 * Math.sin(Math.PI * t));
+  }
+
+  // ── Body top-left to top-center — 5 pts ──────────────────────
+  for (let i = 1; i <= 5; i++) add(-50 + 24 * (i / 5), -26 + (i / 5) * 2);
+
+  // ── Body top-center curve — 5 pts ────────────────────────────
+  for (let i = 0; i <= 4; i++) add(-26 + 52 * (i / 4), -24 + 2 * Math.sin(Math.PI * i / 4));
+
+  // ── Body top-center to top-right — 5 pts ─────────────────────
+  for (let i = 1; i <= 5; i++) add(26 + 24 * (i / 5), -24 - (i / 5) * 2);
+
+  // ── R1 button (mirror L1) — 7 pts ────────────────────────────
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    add(50 + 18 * t, -28 - 3 * Math.sin(Math.PI * (1 - t)));
+  }
+
+  // ── R2 trigger (top-right, true mirror of L2) — 11 pts ──────
+  // L2 center=(−58,−28), goes from a=π·0.62→π  (left outer bump)
+  // R2 center=(+58,−28), goes from a=π·0.38→0  (right outer bump, mirrored)
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    const a = Math.PI * 0.38 * (1 - t);   // π·0.38 → 0
+    add(58 + 20 * Math.cos(a), -28 + 18 * Math.sin(a));
+  }
+
+  // ── Right body side (top to grip junction) — 5 pts ───────────
+  for (let i = 1; i <= 5; i++) add(68, -20 + 14 * i);
+
+  // ── Right grip outer curve — 7 pts ───────────────────────────
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    add(68 + 4 * Math.sin(Math.PI * t * 0.8), 50 + 18 * t);
+  }
+
+  // ── Right grip bottom curve — 7 pts ──────────────────────────
+  for (let i = 0; i <= 6; i++) {
+    const a = Math.PI * (i / 6);
+    add(50 + 20 * Math.cos(a), 70 + 10 * Math.sin(a));
+  }
+
+  // ── Right grip inner (back up to bridge) — 6 pts ─────────────
+  for (let i = 0; i <= 5; i++) add(30, 70 - 16 * i / 5);
+
+  // ── Bridge between grips (bottom of body) — 5 pts ────────────
+  add(22, 54); add(11, 57); add(0, 58); add(-11, 57); add(-22, 54);
+
+  // ── Left grip inner (down from bridge) — 6 pts ───────────────
+  for (let i = 0; i <= 5; i++) add(-30, 54 + 16 * i / 5);
+
+  // ── Left grip bottom curve — 7 pts ───────────────────────────
+  for (let i = 0; i <= 6; i++) {
+    const a = Math.PI + Math.PI * (i / 6);
+    add(-50 + 20 * Math.cos(a), 70 + 10 * Math.sin(a));
+  }
+
+  // ── Left grip outer curve — 7 pts ────────────────────────────
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    add(-68 - 4 * Math.sin(Math.PI * (1 - t) * 0.8), 68 - 18 * t);
+  }
+
+  // ── Left body side (grip to top) — 5 pts ─────────────────────
+  for (let i = 1; i <= 5; i++) add(-68, 50 - 14 * i);
+
+  // === OUTER SILHOUETTE DONE (~94 pts) =========================
+
+  // ── D-pad cross (upper-left area) — 21 pts ───────────────────
+  const dpx = -44, dpy = -2, dpR = 12;
+  for (let i = -5; i <= 5; i++) add(dpx + i * dpR / 5, dpy);          // horizontal bar
+  for (let i = -5; i <= -2; i++) add(dpx, dpy + i * dpR / 5);         // vertical top
+  for (let i = 2; i <= 5; i++)  add(dpx, dpy + i * dpR / 5);          // vertical bottom
+  // Corner notch dots
+  add(dpx - 7, dpy - 7); add(dpx + 7, dpy - 7);
+  add(dpx - 7, dpy + 7); add(dpx + 7, dpy + 7);
+
+  // ── Face buttons △○×□ (upper-right area) — 20 pts ───────────
+  const fbx = 44, fby = -2, fbD = 13, bR = 4;
+  [[fbx, fby - fbD], [fbx + fbD, fby], [fbx, fby + fbD], [fbx - fbD, fby]]
+    .forEach(([bx, by]) => {
+      for (let i = 0; i < 5; i++) {
+        add(bx + bR * Math.cos(2 * Math.PI * i / 5), by + bR * Math.sin(2 * Math.PI * i / 5));
+      }
+    });
+
+  // ── Left analog stick (circle, lower-left) — 17 pts ──────────
+  const lax = -32, lay = 22, laR = 12;
+  for (let i = 0; i < 14; i++) add(lax + laR * Math.cos(2 * Math.PI * i / 14), lay + laR * Math.sin(2 * Math.PI * i / 14));
+  add(lax, lay); add(lax + 4, lay); add(lax - 4, lay);
+
+  // ── Right analog stick (circle, lower-center) — 17 pts ───────
+  const rax = 10, ray = 22, raR = 12;
+  for (let i = 0; i < 14; i++) add(rax + raR * Math.cos(2 * Math.PI * i / 14), ray + raR * Math.sin(2 * Math.PI * i / 14));
+  add(rax, ray); add(rax + 4, ray); add(rax - 4, ray);
+
+  // ── Touchpad (large, center — DualSense has a big one) — 30 pts
+  const tpw = 34, tph = 19, tpcy = -11;
+  for (let i = 0; i <= 11; i++) add(-tpw / 2 + tpw * i / 11, tpcy - tph / 2); // top edge
+  for (let i = 0; i <= 11; i++) add(-tpw / 2 + tpw * i / 11, tpcy + tph / 2); // bottom edge
+  for (let i = 1; i <= 3; i++) { add(-tpw / 2, tpcy - tph / 2 + tph * i / 4); add(tpw / 2, tpcy - tph / 2 + tph * i / 4); } // sides
+
+  // ── Light bars (glowing strips on touchpad sides — DualSense) — 6 pts
+  add(-tpw / 2 - 3, tpcy - 4); add(-tpw / 2 - 3, tpcy); add(-tpw / 2 - 3, tpcy + 4);
+  add( tpw / 2 + 3, tpcy - 4); add( tpw / 2 + 3, tpcy); add( tpw / 2 + 3, tpcy + 4);
+
+  // ── Options / Create small buttons — 6 pts ───────────────────
+  add(30, -13); add(31, -14); add(30, -15);    // Options (right of touchpad)
+  add(-30, -13); add(-31, -14); add(-30, -15); // Create  (left of touchpad)
+
+  // ── PS logo button (circle below touchpad) — 9 pts ───────────
+  const psR = 5;
+  for (let i = 0; i < 8; i++) add(psR * Math.cos(2 * Math.PI * i / 8), 12 + psR * Math.sin(2 * Math.PI * i / 8));
+  add(0, 12);
+
+  // ── Speaker grille (iconic DualSense detail) — 12 pts ────────
+  // 2 rows × 6 cols between the analogs, below the PS button
+  for (let row = 0; row < 2; row++) {
+    for (let col = 0; col < 6; col++) {
+      add(-12 + col * 5, 36 + row * 5);
+    }
+  }
+
+  // ── Microphone hole — 2 pts ──────────────────────────────────
+  add(-2, 28); add(2, 28);
+
+  // Safety pad — jitter-copy existing pts until we reach N
+  let ei = 0;
+  while (pts.length < N) {
+    const src = pts[ei++ % Math.min(pts.length, 150)];
+    add(src.x - cx + (Math.random() - 0.5) * 4, src.y - cy + (Math.random() - 0.5) * 4);
+  }
+  return pts.slice(0, N);
+}
+
 // ── Particle Orb ─────────────────────────────────────────────
 
 class ParticleOrb {
@@ -22,7 +175,12 @@ class ParticleOrb {
     this.targetAmp  = 0;
     this.state      = 'idle';
     this.speakT     = 0;
-    this.rafId      = null;
+    this.rafId        = null;
+    this._lowPower    = false;    // gaming / resource-save mode
+    this._gamingActive = false;   // controller morph active
+    this._gamingMorph  = 0;       // 0 = sphere, 1 = controller
+    this._gameTargets  = null;    // pre-built controller dot positions
+    this._gameT        = 0;       // time accumulator for gaming idle animation
 
     // Fibonacci-lattice sphere points
     const gr = (1 + Math.sqrt(5)) / 2;
@@ -63,13 +221,31 @@ class ParticleOrb {
     }
   }
 
+  // Enter / exit gaming mode: throttle fps + morph dots into PS controller shape
+  setLowPower(lp) {
+    this._lowPower    = lp;
+    this._gamingActive = lp;
+    if (lp && !this._gameTargets) {
+      // Build target positions once — shift up 15 px for visual centering
+      this._gameTargets = buildControllerTargets(this.cx, this.cy - 15, this.N);
+    }
+    if (!lp) this._gameT = 0;  // reset idle timer when returning to normal
+    if (!this.rafId && !this.paused) this.start();
+  }
+
   start() {
     this.paused = false;
     let last = 0;
+    const LP_INTERVAL = 125; // ~8 fps in low-power mode
     const loop = (t) => {
       if (this.paused) {
         // While dragging: stop requesting frames, draw one frozen frame
         this.rafId = null;
+        return;
+      }
+      // In low-power mode, skip frames to cap at ~8 fps
+      if (this._lowPower && last && (t - last) < LP_INTERVAL) {
+        this.rafId = requestAnimationFrame(loop);
         return;
       }
       const dt = Math.min((t - last) / 1000, 0.05);
@@ -87,8 +263,14 @@ class ParticleOrb {
     // Smooth amplitude
     this.amplitude += (this.targetAmp - this.amplitude) * 10 * dt;
 
-    // Rotate
-    this.rotY += this.rotSpeed;
+    // Advance gaming morph (smooth ~0.8 s transition in both directions)
+    const morphTarget = this._gamingActive ? 1 : 0;
+    this._gamingMorph += (morphTarget - this._gamingMorph) * 1.4 * dt;
+    this._gamingMorph  = Math.max(0, Math.min(1, this._gamingMorph));
+    if (this._gamingActive) this._gameT += dt;
+
+    // Rotate — slow down and stop as controller morph completes
+    this.rotY += this.rotSpeed * (1 - this._gamingMorph * 0.95);
 
     // Auto-generate target amplitude per state
     const t = performance.now() / 1000;
@@ -113,13 +295,14 @@ class ParticleOrb {
     const { ctx, cx, cy, W, H, amplitude: amp, rotY, rotX, FOV, BASE_R } = this;
     ctx.clearRect(0, 0, W, H);
 
-    const t   = performance.now() / 1000;
-    const r   = BASE_R * (1 + amp * 0.38);
+    const t    = performance.now() / 1000;
+    const r    = BASE_R * (1 + amp * 0.38);
     const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
     const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+    const m    = this._gamingMorph;
 
-    // Project + displace all points
-    const proj = this.pts.map((p) => {
+    // Project + displace all sphere points
+    const proj = this.pts.map((p, i) => {
       let disp = 1;
       if (this.state === 'speaking' || this.state === 'listening') {
         disp = 1 + Math.sin(t * p.freq * (this.state === 'speaking' ? 9 : 5) + p.phase) * amp * 0.45;
@@ -128,11 +311,8 @@ class ParticleOrb {
       }
 
       const x = p.ox * disp, y = p.oy * disp, z = p.oz * disp;
-
-      // Rotate Y
       const x1 = x * cosY - z * sinY;
       const z1 = x * sinY + z * cosY;
-      // Rotate X
       const y2 = y * cosX - z1 * sinX;
       const z2 = y * sinX + z1 * cosX;
 
@@ -141,35 +321,59 @@ class ParticleOrb {
         x: cx + x1 * r * scale,
         y: cy + y2 * r * scale,
         depth: (z2 + 1) / 2,
+        idx: i,
       };
     });
 
     // Back-to-front sort
     proj.sort((a, b) => a.depth - b.depth);
 
-    // Draw phosphorescent dots with glow
-    ctx.shadowColor = 'rgba(0,255,120,0.7)';
-    ctx.shadowBlur  = 6 + amp * 10;
-    proj.forEach(({ x, y, depth }) => {
-      const alpha   = 0.25 + depth * 0.75;
-      const dotSize = 0.8 + depth * 1.6 + amp * 1.4;
+    // ── Morph toward PlayStation controller ──────────────────
+    if (m > 0.001 && this._gameTargets) {
+      proj.forEach((p) => {
+        const tgt = this._gameTargets[p.idx];
+        p.x     = p.x     * (1 - m) + tgt.x * m;
+        p.y     = p.y     * (1 - m) + tgt.y * m;
+        p.depth = p.depth * (1 - m) + 0.5   * m; // flatten depth → no perspective in controller mode
+      });
+    }
+
+    // ── Colour interpolation: green → blue-purple (PS vibes) ─
+    // Normal:  rgb(0,   255, 120)  — AXIOM green
+    // Gaming:  rgb(80,  120, 255)  — PS blue-purple
+    const cR = Math.round(80  * m);
+    const cG = Math.round(255 - 135 * m);
+    const cB = Math.round(120 + 135 * m);
+
+    // ── Draw dots ─────────────────────────────────────────────
+    ctx.shadowColor = `rgba(${cR},${cG},${cB},0.72)`;
+    ctx.shadowBlur  = 6 + amp * 10 + m * 8;
+    proj.forEach(({ x, y, depth, idx }) => {
+      const alpha = 0.25 + depth * 0.75;
+      // Gentle travelling wave pulse when fully in controller mode
+      const pulse = m > 0.5
+        ? 1 + 0.18 * Math.sin(this._gameT * 2.5 + idx * 0.09) * ((m - 0.5) * 2)
+        : 1;
+      const dotSize = Math.max(0.5, (0.8 + depth * 1.6 + amp * 1.4) * pulse);
       ctx.beginPath();
       ctx.arc(x, y, dotSize, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(0,255,120,${alpha.toFixed(2)})`;
+      ctx.fillStyle = `rgba(${cR},${cG},${cB},${alpha.toFixed(2)})`;
       ctx.fill();
     });
     ctx.shadowBlur = 0;
 
-    // Core glow when active — circular fill only, never the full canvas rect
-    if (amp > 0.06) {
-      const glowR = r * 1.35;
-      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
-      grd.addColorStop(0, `rgba(0,255,120,${(amp * 0.13).toFixed(3)})`);
-      grd.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grd;
-      ctx.beginPath();
-      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
-      ctx.fill();
+    // ── Core glow (shrinks to nothing in full controller mode) ─
+    if (amp > 0.06 && m < 0.98) {
+      const glowR = r * 1.35 * (1 - m);
+      if (glowR > 4) {
+        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+        grd.addColorStop(0, `rgba(${cR},${cG},${cB},${(amp * 0.13).toFixed(3)})`);
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 }
@@ -625,5 +829,13 @@ if (window.axiom.onInterrupted) {
 if (window.axiom.onSpeakingStarted) {
   window.axiom.onSpeakingStarted(() => {
     if (!cancelled) setState('speaking');
+  });
+}
+
+// ── Gaming / high-resource mode — throttle rendering to free GPU/CPU ──────────
+if (window.axiom.onGamingMode) {
+  window.axiom.onGamingMode((active) => {
+    orb.setLowPower(active);
+    // Framerate throttled silently — no visual change, orb stays normal
   });
 }

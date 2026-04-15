@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('axiom', {
   onWindowMoving: (cb) => ipcRenderer.on('window-moving', (_e, moving) => cb(moving)),
   onInterrupted: (cb) => ipcRenderer.on('axiom-interrupted', () => cb()),
   onSpeakingStarted: (cb) => ipcRenderer.on('speaking-started', () => cb()),
+  onGamingMode: (cb) => ipcRenderer.on('gaming-mode-changed', (_e, active) => cb(active)),
   moveWindowBy: (dx, dy) => ipcRenderer.send('move-window-by', dx, dy),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('set-ignore-mouse-events', ignore),
   processBrainstorm: (arrayBuffer, mode) => ipcRenderer.invoke('process-brainstorm', { arrayBuffer, mode }),

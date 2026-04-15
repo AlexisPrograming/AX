@@ -11,8 +11,9 @@ const terminalWatcher = require('../services/terminal-watcher.js');
 const clipboardService = require('../services/clipboard.js');
 const usageTracker    = require('../services/usage-tracker.js');
 const voiceAuth       = require('../services/voice-auth.js');
-const windowMonitor   = require('../services/window-monitor.js');
-const activityTracker = require('../services/activity-tracker.js');
+const windowMonitor      = require('../services/window-monitor.js');
+const activityTracker    = require('../services/activity-tracker.js');
+const performanceMonitor = require('../services/performance-monitor.js');
 
 const dotenvPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
@@ -298,6 +299,31 @@ app.whenReady().then(() => {
   // Usage tracker — starts logging active window every 60 s
   usageTracker.start();
 
+  // Performance monitor — enters light mode during gaming / high-CPU activity
+  performanceMonitor.start((isGaming, reason) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('gaming-mode-changed', isGaming);
+    }
+    if (tray && !tray.isDestroyed()) {
+      tray.setToolTip(isGaming ? 'AXIOM — Gaming Mode' : 'AXIOM — Voice Assistant');
+    }
+    if (isGaming) {
+      // Silent toast — don't interrupt the game with speech
+      new Notification({
+        title: 'AXIOM — Gaming Mode',
+        body: 'Running light. Voice still active.',
+        icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
+        silent: true,
+      }).show();
+    } else {
+      // Brief spoken announcement when resources free up
+      try {
+        const { speak } = require('../services/speaker.js');
+        speak("Back to normal.").catch(() => {});
+      } catch {}
+    }
+  });
+
   // Window activity monitor — suggests closing idle high-RAM apps
   windowMonitor.start(async (suggestion) => {
     const { speak } = require('../services/speaker.js');
@@ -484,6 +510,7 @@ app.on('will-quit', async () => {
   terminalWatcher.shutdown();
   usageTracker.stop();
   windowMonitor.stop();
+  performanceMonitor.stop();
 });
 
 app.on('window-all-closed', (e) => {

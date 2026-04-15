@@ -37,7 +37,13 @@
       "Bash(git check-ignore:*)",
       "Bash(wc -l /c/AX/.claude/worktrees/clever-hopper/axiom/src/services/*.js)",
       "Bash(npm --version)",
-      "Bash(schtasks /query /tn \"AXIOM Autostart\" /fo LIST)"
+      "Bash(schtasks /query /tn \"AXIOM Autostart\" /fo LIST)",
+      "Bash(schtasks /query /tn \"AXIOM Startup\" /fo LIST /v)",
+      "Bash(cmd /c \"schtasks /query /tn \\\\\"AXIOM Startup\\\\\" /fo LIST /v 2>&1\")",
+      "Bash(cmd /c schtasks /query /fo LIST /v)",
+      "Bash(findstr /i \"axiom\")",
+      "Bash(cmd /c \"if exist \\\\\"C:\\\\Users\\\\alexi\\\\AppData\\\\Local\\\\Programs\\\\axiom\\\\AXIOM.exe\\\\\" \\(echo AXIOM.EXE EXISTS\\) else \\(echo NOT FOUND\\)\")",
+      "Bash(cmd /c dir \"C:\\\\Users\\\\alexi\\\\AppData\\\\Local\\\\Programs\\\\axiom\\\\\" 2>&1)"
     ]
   },
   "enableAllProjectMcpServers": true,
