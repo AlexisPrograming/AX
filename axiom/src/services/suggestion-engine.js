@@ -31,16 +31,19 @@ function toLabel(exe) {
 }
 
 /**
- * openWindows : [{ exe, ramMB }]  — from window-monitor.getOpenWindows()
- * lastSeenFn  : (exe) => minutes_since_last_foreground  — from usage-tracker
+ * openWindows         : [{ exe, ramMB }]  — from window-monitor.getOpenWindows()
+ * lastSeenFn          : (exe) => minutes_since_last_foreground  — from usage-tracker
+ * currentForegroundExe: string|null — currently active exe; never suggest it
  * Returns a suggestion object or null.
  */
-function getSuggestion(openWindows, lastSeenFn) {
+function getSuggestion(openWindows, lastSeenFn, currentForegroundExe) {
+  const activeFg = currentForegroundExe ? currentForegroundExe.toLowerCase() : null;
   const candidates = [];
 
   for (const win of openWindows) {
     const exe = win.exe.toLowerCase();
 
+    if (activeFg && exe === activeFg)     continue;  // user is actively using it right now
     if (activityTracker.isProtected(exe)) continue;
     if (LOW_PRIORITY_EXE.has(exe))        continue;
     if (win.ramMB < RAM_MIN_MB)           continue;

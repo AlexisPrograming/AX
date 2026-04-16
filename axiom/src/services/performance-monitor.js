@@ -1,7 +1,12 @@
 // AXIOM Performance Monitor
 // Detects gaming / high-resource activity and notifies main.js to enter light mode.
 // Uses PowerShell (spawn, no cmd.exe) to avoid escaping issues.
-// Polls every 3 s; enters gaming mode after sustained high CPU or known gaming exe.
+//
+// Triggers gaming mode when ANY of the following are sustained:
+//   1. A known game executable is running
+//   2. Total system CPU >= SYS_CPU_THRESH (75%)
+//   3. A single process consumes >= PER_PROC_CPU_THRESH (70%) of total CPU
+//   4. A single process consumes >= GPU_THRESH (70%) of a GPU 3D engine
 
 'use strict';
 
@@ -33,7 +38,6 @@ const GAME_EXES = new Set([
 
 // ── Game LAUNCHERS ────────────────────────────────────────────
 // These only trigger gaming mode when system CPU is also elevated.
-// Idle in the background → ignored.  Loading/running a game → CPU spikes → triggers.
 const LAUNCHER_EXES = new Set([
   'steam', 'epicgameslauncher', 'galaxyclient', 'upc',
   'riotclientservices', 'xboxapp', 'xboxgame', 'battle.net',
@@ -52,27 +56,72 @@ const NO_TRIGGER = new Set([
   'textinputhost', 'explorer', 'taskmgr',
   // AXIOM itself
   'axiom', 'electron',
-  // Browsers (heavy RAM but not games)
+  // Browsers (heavy RAM/GPU but not games)
   'chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi',
   // Dev tools
   'code', 'devenv', 'node', 'npm', 'git', 'msbuild', 'python', 'python3',
 ]);
 
 // ── Thresholds ────────────────────────────────────────────────
-const POLL_MS          = 3000;   // poll interval
-const SYS_CPU_THRESH   = 75;     // system CPU % — raised to avoid false positives
-const SUSTAINED_ENTER  = 8;      // ~24 s of sustained high CPU → enter gaming mode
-const GAMING_EXE_ENTER = 3;      // 3 polls (~9 s) with known game exe → enter
-const SUSTAINED_EXIT   = 10;     // ~30 s of low load → exit gaming mode
+const POLL_MS             = 3000;  // poll interval
+const WATCHDOG_MS         = 12000; // kill stalled PS after 12 s (GPU query adds ~1 s)
+const SYS_CPU_THRESH      = 75;    // system-wide CPU % → avoids false positives
+const PER_PROC_CPU_THRESH = 70;    // single process CPU % (normalised per core)
+const GPU_THRESH          = 70;    // single process GPU 3D-engine utilisation %
+const SUSTAINED_ENTER     = 8;     // ~24 s of sustained high CPU → enter gaming mode
+const GAMING_EXE_ENTER    = 3;     // 3 polls (~9 s) with known game exe → enter
+const SUSTAINED_EXIT      = 10;    // ~30 s of low load → exit gaming mode
 
 // ── PowerShell snippet ────────────────────────────────────────
-// Returns: "<sysCPU%>|<json-process-array>"
+// Output (one value per line):
+//   line 0 : system CPU %
+//   line 1 : max per-process CPU % (normalised by core count)
+//   line 2 : process name responsible for max CPU
+//   line 3 : max per-process GPU 3D-engine utilisation %
+//   line 4 : process name responsible for max GPU
+//   line 5+: JSON process list [{Name, R}]
 const PS_CODE = `
-$c = [int](Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
-$p = Get-Process -ErrorAction SilentlyContinue |
-     Select-Object Name, @{N='R';E={[int]($_.WorkingSet64/1MB)}} |
-     ConvertTo-Json -Compress -Depth 1
-Write-Output ($c.ToString() + '|' + $p)
+$numCpu = [math]::Max([int]$env:NUMBER_OF_PROCESSORS, 1)
+$sysCpu = [int](Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
+
+# Per-process CPU (normalised to 0-100 of total CPU)
+$maxProcCpuVal = 0; $maxProcCpuName = ''
+try {
+  $top = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notmatch '^(_Total|Idle)$' } |
+    Sort-Object PercentProcessorTime -Descending |
+    Select-Object -First 1
+  if ($top) {
+    $maxProcCpuVal = [math]::Round($top.PercentProcessorTime / $numCpu)
+    $maxProcCpuName = ($top.Name -replace '#\\d+$','').ToLower()
+  }
+} catch {}
+
+# Per-process GPU (3D engine utilisation via Performance Counters)
+$maxGpuVal = 0; $maxGpuName = ''
+try {
+  $gpuTop = (Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' -ErrorAction Stop).CounterSamples |
+    Sort-Object CookedValue -Descending | Select-Object -First 1
+  if ($gpuTop -and $gpuTop.CookedValue -gt 0) {
+    $maxGpuVal = [int][math]::Round($gpuTop.CookedValue)
+    if ($gpuTop.InstanceName -match 'pid_(\\d+)') {
+      $proc = Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue
+      if ($proc) { $maxGpuName = $proc.ProcessName.ToLower() }
+    }
+  }
+} catch {}
+
+# All running processes (for game-exe + RAM checks)
+$procs = Get-Process -ErrorAction SilentlyContinue |
+  Select-Object Name,@{N='R';E={[int]($_.WorkingSet64/1MB)}} |
+  ConvertTo-Json -Compress -Depth 1
+
+Write-Output $sysCpu
+Write-Output $maxProcCpuVal
+Write-Output $maxProcCpuName
+Write-Output $maxGpuVal
+Write-Output $maxGpuName
+Write-Output $procs
 `.trim();
 
 // ─────────────────────────────────────────────────────────────
@@ -120,7 +169,7 @@ class PerformanceMonitor {
     const watchdog = setTimeout(() => {
       timedOut = true;
       try { child.kill(); } catch {}
-    }, 9000);
+    }, WATCHDOG_MS);
 
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.on('close', () => {
@@ -137,20 +186,25 @@ class PerformanceMonitor {
   }
 
   _analyze(raw) {
-    const pipe = raw.indexOf('|');
-    if (pipe < 0) return;
+    const lines = raw.split('\n').map(l => l.trim()).filter(l => l);
+    if (lines.length < 2) return;
 
-    const sysCpu = parseInt(raw.slice(0, pipe), 10) || 0;
+    const sysCpu         = parseInt(lines[0], 10) || 0;
+    const maxProcCpuVal  = parseInt(lines[1], 10) || 0;
+    const maxProcCpuName = lines[2] || '';
+    const maxGpuVal      = parseInt(lines[3], 10) || 0;
+    const maxGpuName     = lines[4] || '';
+    const procsJson      = lines.slice(5).join('');
 
     let procs = [];
     try {
-      const parsed = JSON.parse(raw.slice(pipe + 1));
+      const parsed = JSON.parse(procsJson);
       procs = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
     } catch { return; }
 
-    // ── Gaming exe detection ──────────────────────────────────
-    let gameExeFound     = false;   // definite game running → fast-trigger
-    let launcherHighCpu  = false;   // launcher present + CPU elevated → slow-trigger
+    // ── Game exe detection ────────────────────────────────────
+    let gameExeFound    = false;
+    let launcherHighCpu = false;
 
     for (const p of procs) {
       const name = (p.Name || '').toLowerCase();
@@ -160,19 +214,35 @@ class PerformanceMonitor {
       }
     }
 
-    const gamingExeFound = gameExeFound || launcherHighCpu;
+    // ── Per-process CPU / GPU checks ──────────────────────────
+    const highProcCpu = maxProcCpuVal >= PER_PROC_CPU_THRESH
+      && maxProcCpuName
+      && !NO_TRIGGER.has(maxProcCpuName);
+
+    const highGpu = maxGpuVal >= GPU_THRESH
+      && maxGpuName
+      && !NO_TRIGGER.has(maxGpuName);
 
     // ── Decide high-load ──────────────────────────────────────
-    const highLoad = gamingExeFound || sysCpu >= SYS_CPU_THRESH;
+    const gamingExeFound = gameExeFound || launcherHighCpu;
+    const highLoad       = gamingExeFound || sysCpu >= SYS_CPU_THRESH || highProcCpu || highGpu;
+
+    // Determine reason string (most specific wins)
+    const reason = gameExeFound       ? 'gaming'
+                 : highGpu            ? `highgpu:${maxGpuName}:${maxGpuVal}%`
+                 : highProcCpu        ? `highcpu_proc:${maxProcCpuName}:${maxProcCpuVal}%`
+                 : launcherHighCpu    ? 'launcher'
+                 :                     'highcpu';
 
     if (highLoad) {
       this._highCount++;
       this._lowCount = 0;
-      // Game exe alone → fast-enter. Launcher+CPU or pure CPU → sustained enter.
+      // Game exe alone → fast-enter. Everything else → sustained enter.
       const threshold = gameExeFound ? GAMING_EXE_ENTER : SUSTAINED_ENTER;
       if (!this._isGaming && this._highCount >= threshold) {
         this._isGaming = true;
-        this._cb && this._cb(true, gameExeFound ? 'gaming' : 'highcpu');
+        console.log(`[AXIOM perf] gaming mode ON — reason: ${reason}`);
+        this._cb && this._cb(true, reason);
       }
     } else {
       this._lowCount++;
@@ -181,12 +251,13 @@ class PerformanceMonitor {
         this._isGaming = false;
         this._highCount = 0;
         this._lowCount  = 0;
+        console.log('[AXIOM perf] gaming mode OFF');
         this._cb && this._cb(false, null);
       }
     }
 
-    // Debug (comment out in production)
-    // console.log(`[perf] cpu=${sysCpu}% gaming=${gamingExeFound} high=${this._highCount} low=${this._lowCount} mode=${this._isGaming ? 'GAMING' : 'normal'}`);
+    // Debug (uncomment if needed)
+    // console.log(`[perf] sys=${sysCpu}% procCpu=${maxProcCpuVal}%(${maxProcCpuName}) gpu=${maxGpuVal}%(${maxGpuName}) mode=${this._isGaming ? 'GAMING' : 'normal'}`);
   }
 }
 

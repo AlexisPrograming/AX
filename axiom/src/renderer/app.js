@@ -1,155 +1,124 @@
 // ── DOM refs ─────────────────────────────────────────────────
 const canvas = document.getElementById('orb-canvas');
 
-// ── PS5 DualSense controller — dot silhouette ─────────────────
-// Traces the real DualSense shape: L2/R2 triggers, L1/R1 bumps,
-// rounded body, long grips, large touchpad, speaker grille, light bars.
-// N = number of orb dots (240).
+// ── Gaming mode — futuristic bold "G" with HUD frame ──────────
+// 360 orb dots morph into a rounded-corner "G" inside a cyberpunk
+// HUD bracket frame. Strokes are 3 dots wide (≈10 px).
+// Corner radius R=8 on all outer convex corners + D-cap on top-right.
+// Canvas: 200×200. Controller centre at (cx, cy). Fits within ±54 px.
 function buildControllerTargets(cx, cy, N) {
   const pts = [];
   function add(x, y) { pts.push({ x: cx + x, y: cy + y }); }
 
-  // ── L2 trigger (top-left, large curved bump) — 11 pts ────────
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    const a = Math.PI * 0.62 + t * Math.PI * 0.38;
-    add(-58 + 20 * Math.cos(a), -28 + 18 * Math.sin(a));
+  function seg(x0, y0, x1, y1, n) {
+    for (let i = 0; i < n; i++) {
+      const t = n < 2 ? 0.5 : i / (n - 1);
+      add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+    }
   }
-
-  // ── L1 button (flat bar, just below L2) — 7 pts ──────────────
-  for (let i = 0; i <= 6; i++) {
-    const t = i / 6;
-    add(-68 + 18 * t, -28 - 3 * Math.sin(Math.PI * t));
-  }
-
-  // ── Body top-left to top-center — 5 pts ──────────────────────
-  for (let i = 1; i <= 5; i++) add(-50 + 24 * (i / 5), -26 + (i / 5) * 2);
-
-  // ── Body top-center curve — 5 pts ────────────────────────────
-  for (let i = 0; i <= 4; i++) add(-26 + 52 * (i / 4), -24 + 2 * Math.sin(Math.PI * i / 4));
-
-  // ── Body top-center to top-right — 5 pts ─────────────────────
-  for (let i = 1; i <= 5; i++) add(26 + 24 * (i / 5), -24 - (i / 5) * 2);
-
-  // ── R1 button (mirror L1) — 7 pts ────────────────────────────
-  for (let i = 0; i <= 6; i++) {
-    const t = i / 6;
-    add(50 + 18 * t, -28 - 3 * Math.sin(Math.PI * (1 - t)));
-  }
-
-  // ── R2 trigger (top-right, true mirror of L2) — 11 pts ──────
-  // L2 center=(−58,−28), goes from a=π·0.62→π  (left outer bump)
-  // R2 center=(+58,−28), goes from a=π·0.38→0  (right outer bump, mirrored)
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    const a = Math.PI * 0.38 * (1 - t);   // π·0.38 → 0
-    add(58 + 20 * Math.cos(a), -28 + 18 * Math.sin(a));
-  }
-
-  // ── Right body side (top to grip junction) — 5 pts ───────────
-  for (let i = 1; i <= 5; i++) add(68, -20 + 14 * i);
-
-  // ── Right grip outer curve — 7 pts ───────────────────────────
-  for (let i = 0; i <= 6; i++) {
-    const t = i / 6;
-    add(68 + 4 * Math.sin(Math.PI * t * 0.8), 50 + 18 * t);
-  }
-
-  // ── Right grip bottom curve — 7 pts ──────────────────────────
-  for (let i = 0; i <= 6; i++) {
-    const a = Math.PI * (i / 6);
-    add(50 + 20 * Math.cos(a), 70 + 10 * Math.sin(a));
-  }
-
-  // ── Right grip inner (back up to bridge) — 6 pts ─────────────
-  for (let i = 0; i <= 5; i++) add(30, 70 - 16 * i / 5);
-
-  // ── Bridge between grips (bottom of body) — 5 pts ────────────
-  add(22, 54); add(11, 57); add(0, 58); add(-11, 57); add(-22, 54);
-
-  // ── Left grip inner (down from bridge) — 6 pts ───────────────
-  for (let i = 0; i <= 5; i++) add(-30, 54 + 16 * i / 5);
-
-  // ── Left grip bottom curve — 7 pts ───────────────────────────
-  for (let i = 0; i <= 6; i++) {
-    const a = Math.PI + Math.PI * (i / 6);
-    add(-50 + 20 * Math.cos(a), 70 + 10 * Math.sin(a));
-  }
-
-  // ── Left grip outer curve — 7 pts ────────────────────────────
-  for (let i = 0; i <= 6; i++) {
-    const t = i / 6;
-    add(-68 - 4 * Math.sin(Math.PI * (1 - t) * 0.8), 68 - 18 * t);
-  }
-
-  // ── Left body side (grip to top) — 5 pts ─────────────────────
-  for (let i = 1; i <= 5; i++) add(-68, 50 - 14 * i);
-
-  // === OUTER SILHOUETTE DONE (~94 pts) =========================
-
-  // ── D-pad cross (upper-left area) — 21 pts ───────────────────
-  const dpx = -44, dpy = -2, dpR = 12;
-  for (let i = -5; i <= 5; i++) add(dpx + i * dpR / 5, dpy);          // horizontal bar
-  for (let i = -5; i <= -2; i++) add(dpx, dpy + i * dpR / 5);         // vertical top
-  for (let i = 2; i <= 5; i++)  add(dpx, dpy + i * dpR / 5);          // vertical bottom
-  // Corner notch dots
-  add(dpx - 7, dpy - 7); add(dpx + 7, dpy - 7);
-  add(dpx - 7, dpy + 7); add(dpx + 7, dpy + 7);
-
-  // ── Face buttons △○×□ (upper-right area) — 20 pts ───────────
-  const fbx = 44, fby = -2, fbD = 13, bR = 4;
-  [[fbx, fby - fbD], [fbx + fbD, fby], [fbx, fby + fbD], [fbx - fbD, fby]]
-    .forEach(([bx, by]) => {
-      for (let i = 0; i < 5; i++) {
-        add(bx + bR * Math.cos(2 * Math.PI * i / 5), by + bR * Math.sin(2 * Math.PI * i / 5));
-      }
-    });
-
-  // ── Left analog stick (circle, lower-left) — 17 pts ──────────
-  const lax = -32, lay = 22, laR = 12;
-  for (let i = 0; i < 14; i++) add(lax + laR * Math.cos(2 * Math.PI * i / 14), lay + laR * Math.sin(2 * Math.PI * i / 14));
-  add(lax, lay); add(lax + 4, lay); add(lax - 4, lay);
-
-  // ── Right analog stick (circle, lower-center) — 17 pts ───────
-  const rax = 10, ray = 22, raR = 12;
-  for (let i = 0; i < 14; i++) add(rax + raR * Math.cos(2 * Math.PI * i / 14), ray + raR * Math.sin(2 * Math.PI * i / 14));
-  add(rax, ray); add(rax + 4, ray); add(rax - 4, ray);
-
-  // ── Touchpad (large, center — DualSense has a big one) — 30 pts
-  const tpw = 34, tph = 19, tpcy = -11;
-  for (let i = 0; i <= 11; i++) add(-tpw / 2 + tpw * i / 11, tpcy - tph / 2); // top edge
-  for (let i = 0; i <= 11; i++) add(-tpw / 2 + tpw * i / 11, tpcy + tph / 2); // bottom edge
-  for (let i = 1; i <= 3; i++) { add(-tpw / 2, tpcy - tph / 2 + tph * i / 4); add(tpw / 2, tpcy - tph / 2 + tph * i / 4); } // sides
-
-  // ── Light bars (glowing strips on touchpad sides — DualSense) — 6 pts
-  add(-tpw / 2 - 3, tpcy - 4); add(-tpw / 2 - 3, tpcy); add(-tpw / 2 - 3, tpcy + 4);
-  add( tpw / 2 + 3, tpcy - 4); add( tpw / 2 + 3, tpcy); add( tpw / 2 + 3, tpcy + 4);
-
-  // ── Options / Create small buttons — 6 pts ───────────────────
-  add(30, -13); add(31, -14); add(30, -15);    // Options (right of touchpad)
-  add(-30, -13); add(-31, -14); add(-30, -15); // Create  (left of touchpad)
-
-  // ── PS logo button (circle below touchpad) — 9 pts ───────────
-  const psR = 5;
-  for (let i = 0; i < 8; i++) add(psR * Math.cos(2 * Math.PI * i / 8), 12 + psR * Math.sin(2 * Math.PI * i / 8));
-  add(0, 12);
-
-  // ── Speaker grille (iconic DualSense detail) — 12 pts ────────
-  // 2 rows × 6 cols between the analogs, below the PS button
-  for (let row = 0; row < 2; row++) {
-    for (let col = 0; col < 6; col++) {
-      add(-12 + col * 5, 36 + row * 5);
+  function arc(ox, oy, r, a0, a1, n) {
+    for (let i = 0; i < n; i++) {
+      const t = n < 2 ? 0.5 : i / (n - 1);
+      const a = a0 + (a1 - a0) * t;
+      add(ox + r * Math.cos(a), oy + r * Math.sin(a));
     }
   }
 
-  // ── Microphone hole — 2 pts ──────────────────────────────────
-  add(-2, 28); add(2, 28);
+  // ═══════════════════════════════════════════════════════════════
+  // LETTER  "G"  — thick strokes, 3-dot-wide, rounded outer corners
+  // Bounds: x ±38, y ±44.  Corner radius R = 8.  Stroke step: 5 px.
+  //
+  //  ╭──────────────────╮  ← top bar  y −44→−34, x −38→+38
+  //  │                      ← left stroke  x −38→−28
+  //  │    ────────────┐    ← inner crossbar  y −10→0, x 0→+38
+  //  │               │    ← right lower  x +28→+38, y 0→+36
+  //  ╰─────────────────╯   ← bottom bar  y +34→+44
+  // ═══════════════════════════════════════════════════════════════
+  const R = 8;  // outer corner radius
 
-  // Safety pad — jitter-copy existing pts until we reach N
+  // ── Top bar ─────────────────────────────────────────────────
+  // Left side shortened by R to leave room for top-left corner arc.
+  // Right end stops at x=+33 → D-cap arc finishes the open end.
+  for (let r = 0; r < 3; r++) seg(-38 + R, -44 + r * 5,  33, -44 + r * 5, 12);  // 36 dots
+
+  // Top-left outer corner arc: (−30,−44) → (−38,−36)
+  // centre (−30,−36), r=8, from 3π/2 (top) → π (left)
+  arc(-30, -36, R, 1.5 * Math.PI, Math.PI, 6);
+
+  // Top-right rounded end cap (D-shape — G mouth is open here)
+  // centre (+33,−39) ≈ mid-height of bar (−44..−34), r=5 = half-stroke
+  arc( 33, -39,  5, -0.5 * Math.PI, 0.5 * Math.PI, 7);
+
+  // ── Left vertical stroke ──────────────────────────────────────
+  // Both ends shortened by R to match corner arcs.
+  for (let c = 0; c < 3; c++) seg(-38 + c * 5, -44 + R, -38 + c * 5,  44 - R, 10);  // 30 dots
+
+  // ── Bottom bar ───────────────────────────────────────────────
+  // Both ends shortened by R for corner arcs.
+  for (let r = 0; r < 3; r++) seg(-38 + R,  34 + r * 5,  38 - R,  34 + r * 5, 11);  // 33 dots
+
+  // Bottom-left outer corner arc: (−38,+36) → (−30,+44)
+  // centre (−30,+36), r=8, from π (left) → π/2 (bottom)
+  arc(-30,  36, R, Math.PI, 0.5 * Math.PI, 6);
+
+  // Bottom-right outer corner arc: (+30,+44) → (+38,+36)
+  // centre (+30,+36), r=8, from π/2 (bottom) → 0 (right)
+  arc( 30,  36, R, 0.5 * Math.PI, 0, 6);
+
+  // ── Right lower vertical ─────────────────────────────────────
+  // Outermost col (x=+38) ends at y=+36 to meet bottom-right arc.
+  for (let c = 0; c < 3; c++) {
+    const yEnd  = (c === 2) ? 36 : 34;
+    const nDots = (c === 2) ?  9 :  8;
+    seg(28 + c * 5, 0, 28 + c * 5, yEnd, nDots);  // 8+8+9 = 25 dots
+  }
+
+  // ── Inner horizontal crossbar ────────────────────────────────
+  // The signature G jaw bar, entering from the right side.
+  for (let r = 0; r < 3; r++) seg(0, -10 + r * 5,  38, -10 + r * 5,  8);   // 24 dots
+
+  // G total: 36+6+7+30+33+6+6+25+24 = 173 dots
+
+  // ═══════════════════════════════════════════════════════════════
+  // HUD CORNER BRACKETS  (±48 x, ±52 y;  arm length 15)
+  // ═══════════════════════════════════════════════════════════════
+  const BX = 48, BY = 52, AL = 15;
+  seg(-BX, -BY, -BX + AL, -BY,  6);   seg(-BX, -BY, -BX, -BY + AL,  6);   // top-left
+  seg( BX - AL, -BY,  BX, -BY,  6);   seg( BX, -BY,  BX, -BY + AL,  6);   // top-right
+  seg(-BX,  BY - AL, -BX,  BY,  6);   seg(-BX,  BY, -BX + AL,  BY,  6);   // bottom-left
+  seg( BX,  BY - AL,  BX,  BY,  6);   seg( BX - AL,  BY,  BX,  BY,  6);   // bottom-right
+  // 8 × 6 = 48 dots
+
+  // ═══════════════════════════════════════════════════════════════
+  // HORIZONTAL SCAN LINES
+  // ═══════════════════════════════════════════════════════════════
+  seg(-44, -48,  44, -48, 12);   seg(-44,  48,  44,  48, 12);              // primary
+  seg(-44, -54, -24, -54,  6);   seg( 24, -54,  44, -54,  6);              // dashed top
+  seg(-44,  54, -24,  54,  6);   seg( 24,  54,  44,  54,  6);              // dashed bot
+  // 48 dots
+
+  // ═══════════════════════════════════════════════════════════════
+  // SIDE TICK MARKS
+  // ═══════════════════════════════════════════════════════════════
+  seg(-46, -22, -40, -22,  3);   seg(-46,   0, -40,   0,  3);   seg(-46,  22, -40,  22,  3);
+  seg( 40, -22,  46, -22,  3);   seg( 40,   0,  46,   0,  3);   seg( 40,  22,  46,  22,  3);
+  // 18 dots
+
+  // ═══════════════════════════════════════════════════════════════
+  // CHEVRON ACCENTS  (< left side, > right side)
+  // ═══════════════════════════════════════════════════════════════
+  add(-46, -36); add(-42, -30); add(-46, -24);
+  add(-46,  24); add(-42,  30); add(-46,  36);
+  add( 42, -36); add( 46, -30); add( 42, -24);
+  add( 42,  24); add( 46,  30); add( 42,  36);
+  // 12 dots
+
+  // TOTAL: 173 + 48 + 48 + 18 + 12 = 299 dots  →  pad to 360
   let ei = 0;
   while (pts.length < N) {
-    const src = pts[ei++ % Math.min(pts.length, 150)];
-    add(src.x - cx + (Math.random() - 0.5) * 4, src.y - cy + (Math.random() - 0.5) * 4);
+    const src = pts[ei++ % Math.min(pts.length, 200)];
+    add(src.x - cx + (Math.random() - 0.5) * 3,
+        src.y - cy + (Math.random() - 0.5) * 3);
   }
   return pts.slice(0, N);
 }
@@ -165,7 +134,7 @@ class ParticleOrb {
     this.cx  = this.W / 2;
     this.cy  = this.H / 2;
 
-    this.N          = 240;        // dot count
+    this.N          = 360;        // dot count
     this.BASE_R     = 55;         // base sphere radius (px)
     this.FOV        = 280;
     this.rotY       = 0;

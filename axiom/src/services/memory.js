@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const obsidian = require('./obsidian-sync.js');
 
 const MEMORY_FILE = path.join(app.getPath('userData'), 'memory.json');
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 25;   // keep 25 exchanges in active memory (up from 10)
 
 const DEFAULT_MEMORY = {
   user: {
@@ -65,16 +66,15 @@ function save() {
 
 function addExchange(userMsg, assistantMsg) {
   load();
-  memory.history.push({
-    user: userMsg,
-    assistant: assistantMsg,
-    ts: Date.now(),
-  });
-  // Keep only the last N exchanges
+  const ts = Date.now();
+  memory.history.push({ user: userMsg, assistant: assistantMsg, ts });
+  // Keep only the last N exchanges in active memory
   if (memory.history.length > MAX_HISTORY) {
     memory.history = memory.history.slice(-MAX_HISTORY);
   }
   save();
+  // Mirror to Obsidian vault (no-op if OBSIDIAN_VAULT_PATH not set)
+  obsidian.logExchange(userMsg, assistantMsg, ts);
 }
 
 function addFact(fact) {
@@ -83,6 +83,8 @@ function addFact(fact) {
   if (!memory.facts.some((f) => f.toLowerCase() === lower)) {
     memory.facts.push(fact);
     save();
+    // Mirror updated facts list to Obsidian vault
+    obsidian.syncFacts(memory.facts);
   }
 }
 

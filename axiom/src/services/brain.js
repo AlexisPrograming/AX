@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const memory = require('./memory.js');
 const routines = require('./routines.js');
+const obsidian = require('./obsidian-sync.js');
 
 const client = new Anthropic();
 
@@ -520,6 +521,26 @@ function getMessages() {
   return sessionMessages;
 }
 
+// ── Past-memory recall detection ─────────────────────────────
+const PAST_MEMORY_PATTERNS = /\b(what did we|what were we|do you remember|remember when|last (week|month|time|session|day|night)|yesterday|we talked about|we discussed|we mentioned|what was that|what have we|our last conversation|previously|earlier today|few days ago|recall|look back|search (our|your|my) (history|conversations?|memory|notes?)|what (did|were|was) (i|we)|tell me about (our|what we))\b/i;
+
+function isPastMemoryQuery(text) {
+  return PAST_MEMORY_PATTERNS.test(text || '');
+}
+
+// Build a context block from Obsidian search results to inject into Claude
+function buildPastMemoryBlock(results) {
+  if (!results.length) return null;
+  const lines = ['[PAST CONVERSATIONS — use this to answer accurately, reference dates naturally]'];
+  for (const r of results) {
+    lines.push(`• ${r.date} ${r.time ? '· ' + r.time : ''}`);
+    lines.push(`  Alexis: "${r.user}"`);
+    lines.push(`  AXIOM:  "${r.axiom}"`);
+  }
+  lines.push('[END PAST CONTEXT]');
+  return lines.join('\n');
+}
+
 // ── Continue / resume detection ─────────────────────────────
 let lastSpeechText = '';
 
@@ -537,6 +558,15 @@ async function sendMessage(userMessage) {
   if (CONTINUE_PATTERNS.test(text) && lastSpeechText) {
     const snippet = lastSpeechText.length > 400 ? lastSpeechText.slice(0, 400) + '...' : lastSpeechText;
     userContent = `[You were previously saying: "${snippet}" — Alexis is asking you to continue from exactly where you stopped. Resume naturally mid-thought, do NOT restart from the beginning.]\n${text}`;
+  }
+
+  // Search Obsidian for past conversation context when user asks about history
+  if (isPastMemoryQuery(text)) {
+    try {
+      const pastResults = obsidian.searchConversations(text);
+      const pastBlock   = buildPastMemoryBlock(pastResults);
+      if (pastBlock) userContent = `${pastBlock}\n\n${userContent}`;
+    } catch {}
   }
 
   // Prepend the (private) context tag so Claude can read mood/time without the user ever seeing it
@@ -600,6 +630,16 @@ async function sendMessage(userMessage) {
       parsed.action = null;
     } else if (parsed.action.type === 'set_quiet_mode') {
       memory.setQuietMode(!!parsed.action.enabled);
+      parsed.action = null;
+    } else if (parsed.action.type === 'evolve') {
+      // Self-learning: AXIOM adjusts its own behavior silently
+      try {
+        const evolution = require('./evolution.js');
+        evolution.applyEvolution(parsed.action);
+        console.log('[AXIOM evolution] applied:', parsed.action);
+      } catch (err) {
+        console.error('[AXIOM evolution] failed:', err.message);
+      }
       parsed.action = null;
     } else if (parsed.action.type === 'brainstorm_start') {
       // Action passes through to main.js which sends IPC to renderer
@@ -1117,4 +1157,4 @@ async function summarizeSearchResults(query, resultsText) {
   }
 }
 
-module.exports = { sendMessage, sendMessageWithImage, sendMessageWithClipboard, needsScreen, needsClipboard, clearHistory, generateBriefing, generateProactive, summarizeSearchResults, explainError };
+module.exports = { sendMessage, sendMessageWithImage, sendMessageWithClipboard, needsScreen, needsClipboard, clearHistory, generateBriefing, generateProactive, summarizeSearchResults, explainError, isPastMemoryQuery };

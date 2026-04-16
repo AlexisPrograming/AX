@@ -51,14 +51,34 @@ function minutesSinceLastSeen(exe) {
   return Math.round((Date.now() - ts) / 60000);
 }
 
+// ── Current foreground exe (best-effort, null on failure) ─────
+function getCurrentForegroundExe() {
+  return new Promise((resolve) => {
+    const ps = `
+$h = [System.IntPtr]::Zero
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class WM { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }
+"@ -ErrorAction SilentlyContinue
+$h = [WM]::GetForegroundWindow()
+$p = (Get-Process | Where-Object { $_.MainWindowHandle -eq $h } | Select-Object -First 1)
+if ($p) { Write-Output $p.ProcessName }
+`.trim();
+    exec(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/"/g, '\\"')}"`,
+      { windowsHide: true, timeout: 4000 },
+      (err, stdout) => resolve(err || !stdout.trim() ? null : stdout.trim().toLowerCase())
+    );
+  });
+}
+
 // ── Main check cycle ───────────────────────────────────────────
 async function check() {
   if (Date.now() - lastSuggestionAt < SUGGESTION_GAP) return;
 
-  const windows = await getOpenWindows();
+  const [windows, currentFg] = await Promise.all([getOpenWindows(), getCurrentForegroundExe()]);
   if (!windows.length) return;
 
-  const suggestion = suggestionEngine.getSuggestion(windows, minutesSinceLastSeen);
+  const suggestion = suggestionEngine.getSuggestion(windows, minutesSinceLastSeen, currentFg);
   if (!suggestion) return;
 
   lastSuggestionAt = Date.now();

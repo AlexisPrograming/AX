@@ -1,9 +1,10 @@
 // Voice notes — persistent, categorized, date-organized
 // Stored in: %APPDATA%/axiom/notes.json
 
-const fs   = require('fs');
-const path = require('path');
-const { app } = require('electron');
+const fs       = require('fs');
+const path     = require('path');
+const { app }  = require('electron');
+const obsidian = require('./obsidian-sync.js');
 
 const NOTES_FILE = path.join(app.getPath('userData'), 'notes.json');
 
@@ -56,6 +57,8 @@ function add(content, category = 'random') {
   };
   data.notes.push(note);
   save(data);
+  // Mirror today's notes to Obsidian vault
+  obsidian.syncNotes(data.notes.filter(n => n.date === note.date), note.date);
   return note;
 }
 

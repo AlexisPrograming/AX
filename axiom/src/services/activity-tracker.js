@@ -47,6 +47,7 @@ function save() {
 }
 
 function getApp(exe) {
+  if (!data) load();
   const key = exe.toLowerCase();
   if (!data.apps[key]) {
     data.apps[key] = {
@@ -94,10 +95,10 @@ function recordDecision(exe, accepted) {
   if (accepted) app.acceptCount++;
   else          app.rejectCount++;
 
-  // Auto-protect after 3 rejections with no accepts
-  if (app.rejectCount >= 3 && app.acceptCount === 0) {
+  // Auto-protect on first rejection — one "no" = never ask again
+  if (!accepted) {
     app.protected = true;
-    console.log(`[AXIOM activity-tracker] auto-protected ${exe} after 3 rejections`);
+    console.log(`[AXIOM activity-tracker] auto-protected ${exe} after rejection`);
   }
   save();
 }

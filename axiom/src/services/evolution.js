@@ -3,7 +3,6 @@
 // Loaded on every startup and injected into the system prompt.
 
 const path = require('path');
-const os   = require('fs');
 const fs   = require('fs');
 
 const DATA_FILE = path.join(require('os').homedir(), 'Documents', 'AXIOM', 'evolution.json');

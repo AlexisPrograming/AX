@@ -43,7 +43,15 @@
       "Bash(cmd /c schtasks /query /fo LIST /v)",
       "Bash(findstr /i \"axiom\")",
       "Bash(cmd /c \"if exist \\\\\"C:\\\\Users\\\\alexi\\\\AppData\\\\Local\\\\Programs\\\\axiom\\\\AXIOM.exe\\\\\" \\(echo AXIOM.EXE EXISTS\\) else \\(echo NOT FOUND\\)\")",
-      "Bash(cmd /c dir \"C:\\\\Users\\\\alexi\\\\AppData\\\\Local\\\\Programs\\\\axiom\\\\\" 2>&1)"
+      "Bash(cmd /c dir \"C:\\\\Users\\\\alexi\\\\AppData\\\\Local\\\\Programs\\\\axiom\\\\\" 2>&1)",
+      "Bash(dir \"%APPDATA%\\\\axiom\")",
+      "Bash(dir \"%USERPROFILE%\\\\Documents\\\\AXIOM\")",
+      "Bash(dir \"D:\\\\AX\\\\axiom\\\\.env\")",
+      "Bash(powershell.exe -NoProfile -Command \"Add-Content -Path 'D:\\\\AX\\\\axiom\\\\.env' -Value 'OBSIDIAN_VAULT_PATH=D:\\\\Axiom_Obsidian_1'\")",
+      "Bash(powershell.exe -NoProfile -Command \"Get-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
+      "Bash(nOBSIDIAN' | Set-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
+      "Bash(powershell.exe -NoProfile -Command \"\\(Get-Content 'D:\\\\AX\\\\axiom\\\\.env'\\) -replace '3062b6765dOBSIDIAN', '3062b6765d`nOBSIDIAN' | Set-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
+      "Bash(powershell.exe -NoProfile -Command ':*)"
     ]
   },
   "enableAllProjectMcpServers": true,

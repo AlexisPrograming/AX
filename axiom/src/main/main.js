@@ -229,23 +229,6 @@ app.whenReady().then(() => {
     },
   });
 
-  // Terminal watcher — init with error callback
-  terminalWatcher.init({
-    onError: async (errorText) => {
-      const { explainError } = require('../services/brain.js');
-      const { speak } = require('../services/speaker.js');
-      try {
-        const explanation = await explainError(errorText);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('axiom-proactive', `Error detected: ${explanation}`);
-        }
-        await speak(`Hey, got an error. ${explanation}`);
-      } catch (err) {
-        console.error('[AXIOM terminal watcher] error handler failed:', err.message);
-      }
-    },
-  });
-
   // Pomodoro — init with speak + tray tooltip updater
   pomodoro.init({
     speak: (text) => {
@@ -637,11 +620,25 @@ async function handleClipboardIntent(message) {
 // ── IPC handlers ─────────────────────────────────────────────
 
 ipcMain.handle('send-to-claude', async (_event, message) => {
-  const { sendMessage, summarizeSearchResults } = require('../services/brain.js');
+  const { sendMessage, summarizeSearchResults, isPastMemoryQuery } = require('../services/brain.js');
   const { executeAction } = require('../services/pc-control.js');
   const { speak } = require('../services/speaker.js');
 
   proactive.recordInteraction();
+
+  // ── Past-memory recall: speak a natural thinking pause first ─
+  if (isPastMemoryQuery(message)) {
+    const phrases = [
+      "Give me a second, let me look back.",
+      "One sec, searching through our history.",
+      "Hold on, let me check.",
+      "Give me a moment.",
+      "Let me look back real quick.",
+    ];
+    try {
+      await speak(phrases[Math.floor(Math.random() * phrases.length)]);
+    } catch {}
+  }
 
   // ── Window-close suggestion response ─────────────────────
   if (pendingWindowSuggestion) {
@@ -967,7 +964,6 @@ ipcMain.handle('transcribe-audio', async (_event, arrayBuffer, isWav = true) => 
 });
 
 ipcMain.handle('process-brainstorm', async (_event, { arrayBuffer, mode }) => {
-  const { transcribeAudio } = ipcMain; // reuse transcription via direct call
   const OpenAI = require('openai');
   const { toFile } = require('openai/uploads');
   const { processThoughts } = require('../services/brainstorm.js');
