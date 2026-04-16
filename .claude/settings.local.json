@@ -51,7 +51,9 @@
       "Bash(powershell.exe -NoProfile -Command \"Get-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
       "Bash(nOBSIDIAN' | Set-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
       "Bash(powershell.exe -NoProfile -Command \"\\(Get-Content 'D:\\\\AX\\\\axiom\\\\.env'\\) -replace '3062b6765dOBSIDIAN', '3062b6765d`nOBSIDIAN' | Set-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
-      "Bash(powershell.exe -NoProfile -Command ':*)"
+      "Bash(powershell.exe -NoProfile -Command ':*)",
+      "Bash(uvx --version)",
+      "Bash(where blender *)"
     ]
   },
   "enableAllProjectMcpServers": true,

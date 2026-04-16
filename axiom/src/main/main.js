@@ -753,6 +753,58 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       return { speech: result.speech, needsReply: false };
     }
 
+    // ── Blender 3D scene query ────────────────────────────────
+    if (result.action.type === 'blender_query') {
+      const blender = require('../services/blender.js');
+      if (!(await blender.isRunning())) {
+        const msg = "Blender's MCP server isn't running. Open Blender, press N, go to the BlenderMCP tab and click Start MCP Server.";
+        lastAxiomResponse = msg;
+        return { speech: msg, needsReply: false };
+      }
+      try {
+        const desc = await blender.describeScene();
+        lastAxiomResponse = desc;
+        return { speech: desc, needsReply: false };
+      } catch (err) {
+        const msg = `Couldn't read the scene — ${err.message.slice(0, 80)}`;
+        lastAxiomResponse = msg;
+        return { speech: msg, needsReply: false };
+      }
+    }
+
+    // ── Blender 3D command ────────────────────────────────────
+    if (result.action.type === 'blender') {
+      const blender = require('../services/blender.js');
+      if (!(await blender.isRunning())) {
+        const msg = "Blender's MCP server isn't running. Open Blender, press N, go to the BlenderMCP tab and click Start MCP Server.";
+        lastAxiomResponse = msg;
+        return { speech: msg, needsReply: false };
+      }
+      const code = result.action.code || '';
+      if (!code.trim()) {
+        const msg = "I didn't generate any code for that Blender command. Try rephrasing.";
+        lastAxiomResponse = msg;
+        return { speech: msg, needsReply: false };
+      }
+      try {
+        // Speak intent first so Alexis knows what's happening while Blender works
+        await speak(result.speech || result.action.task || 'On it — working in Blender.');
+        const blResult = await blender.executeCode(code);
+        if (blResult && blResult.status === 'error') {
+          const errMsg = `Blender hit an error — ${(blResult.error || 'unknown error').slice(0, 120)}`;
+          lastAxiomResponse = errMsg;
+          return { speech: errMsg, needsReply: false };
+        }
+        // Success — speech already spoken above
+        lastAxiomResponse = result.speech || result.action.task || 'Done.';
+        return { speech: null, needsReply: false };
+      } catch (err) {
+        const msg = `Lost contact with Blender — ${err.message.slice(0, 80)}. Is the server still running?`;
+        lastAxiomResponse = msg;
+        return { speech: msg, needsReply: false };
+      }
+    }
+
     // Web search: speak the placeholder first, then fetch + summarize
     if (result.action.type === 'web_search') {
       const { search } = require('../services/search.js');
