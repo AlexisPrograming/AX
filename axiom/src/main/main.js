@@ -275,6 +275,22 @@ app.whenReady().then(() => {
     showWindow();
   }
 
+  // Post-update announcement — fires after restart if AXIOM just self-updated
+  const justUpdated = store.get('justUpdated');
+  if (justUpdated) {
+    store.delete('justUpdated');
+    setTimeout(async () => {
+      const { speak } = require('../services/speaker.js');
+      let msg = `Hey, I'm back! Just updated myself to version ${justUpdated.version}.`;
+      if (justUpdated.notes) {
+        msg += ` Here's what changed: ${justUpdated.notes}`;
+      } else {
+        msg += ` Everything's fresh and ready to go.`;
+      }
+      await speak(msg).catch(() => {});
+    }, 4500); // Wait for TTS and wakeword to fully initialize first
+  }
+
   // Daily briefing — runs once on startup unless disabled in .env
   runDailyBriefing().catch((err) => console.error('[AXIOM briefing]', err));
 
@@ -663,35 +679,46 @@ async function handlePackagedUpdate(speak) {
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.logger              = null; // silence file logs
 
-    await speak('Checking for updates...');
+    // Pass GitHub token so updates work with private repos
+    if (process.env.GH_TOKEN) {
+      autoUpdater.requestHeaders = { Authorization: `token ${process.env.GH_TOKEN}` };
+    }
 
+    // IPC handler already said "Checking for updates" — go straight to checking
     const result = await autoUpdater.checkForUpdates();
     const info   = result?.updateInfo;
 
     if (!info || info.version === app.getVersion()) {
-      await speak(`You're already on version ${app.getVersion()}. Nothing to update.`);
+      await speak(`All good — you're already on the latest version.`);
       return;
     }
 
-    await speak(`Version ${info.version} is available. Downloading now — I'll restart when it's ready.`);
+    await speak(`New version ${info.version} found. Downloading now, I'll restart when it's ready.`);
 
-    await new Promise((resolve, reject) => {
+    const downloadedInfo = await new Promise((resolve, reject) => {
       autoUpdater.once('update-downloaded', resolve);
       autoUpdater.once('error', reject);
       autoUpdater.downloadUpdate();
     });
 
-    await speak('Download complete. Installing and restarting now.');
+    // Save what's new so AXIOM can announce it after restart
+    const rawNotes = downloadedInfo?.releaseNotes || downloadedInfo?.releaseName || info.releaseNotes || null;
+    const cleanNotes = rawNotes
+      ? String(Array.isArray(rawNotes) ? rawNotes.map(n => n.note || n).join(' ') : rawNotes)
+          .replace(/<[^>]+>/g, '').replace(/\n+/g, ' ').trim().slice(0, 280)
+      : null;
+    store.set('justUpdated', { version: info.version, notes: cleanNotes });
+
+    await speak('All set — update downloaded. Restarting now.');
     await new Promise(r => setTimeout(r, 1800));
     autoUpdater.quitAndInstall(true /* silent */, true /* restart */);
 
   } catch (err) {
     const msg = err?.message || String(err);
     if (/Cannot find module/.test(msg)) {
-      const { speak: s } = require('../services/speaker.js');
-      await s('electron-updater is not installed yet. Run npm install in the axiom folder first.').catch(() => {});
+      await speak('electron-updater is not installed yet. Run npm install in the axiom folder first.').catch(() => {});
     } else {
-      await speak(`Update failed — ${msg.slice(0, 80)}`).catch(() => {});
+      await speak(`Update check failed — ${msg.slice(0, 80)}`).catch(() => {});
     }
   }
 }
@@ -712,7 +739,7 @@ async function handleDevUpdate(speak) {
     const behind = await git('rev-list HEAD..origin/HEAD --count').catch(() => '0');
 
     if (!behind || behind === '0') {
-      await speak("You're already on the latest version. Nothing to update.");
+      await speak("All good — you're already on the latest version.");
       return;
     }
 
@@ -732,7 +759,7 @@ async function handleDevUpdate(speak) {
       });
     }
 
-    await speak('Update complete. Restarting now.');
+    await speak('All set — update installed. Restarting now.');
     await new Promise(r => setTimeout(r, 1800));
     app.relaunch();
     app.exit(0);

@@ -68,7 +68,13 @@
       "Read(//d D:/AX/**)",
       "PowerShell(Stop-Process -Force)",
       "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\", \"$env:APPDATA\", \"C:\\\\Program Files\", \"C:\\\\Program Files \\(x86\\)\" -Recurse -Filter \"Claude.exe\" -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-List)",
-      "PowerShell(Set-Location \"D:\\\\AX\\\\axiom\"; git fetch 2>&1; $behind = git rev-list HEAD..origin/HEAD --count 2>&1; Write-Host \"Commits behind: $behind\"; $changed = git diff --name-only HEAD..origin/HEAD 2>&1; Write-Host \"Changed files: $changed\")"
+      "PowerShell(Set-Location \"D:\\\\AX\\\\axiom\"; git fetch 2>&1; $behind = git rev-list HEAD..origin/HEAD --count 2>&1; Write-Host \"Commits behind: $behind\"; $changed = git diff --name-only HEAD..origin/HEAD 2>&1; Write-Host \"Changed files: $changed\")",
+      "PowerShell(Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases/latest\" -ErrorAction SilentlyContinue | Select-Object tag_name, @{n='assets';e={$_.assets.name}})",
+      "PowerShell(Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases/latest\" | Select-Object tag_name, @{n='assets';e={$_.assets.name}})",
+      "PowerShell(Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases\" -ErrorAction SilentlyContinue | Select-Object -First 3 tag_name, draft, prerelease, @{n='assets';e={$_.assets.name}})",
+      "PowerShell(Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX\")",
+      "PowerShell($token = $env:GH_TOKEN; if \\($token\\) { $headers = @{Authorization=\"token $token\"}; Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX\" -Headers $headers | Select-Object name, private, visibility; Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases\" -Headers $headers | Select-Object tag_name, draft, @{n='assets';e={$_.assets.name}} } else { Write-Host \"GH_TOKEN not set in this session\" })",
+      "PowerShell($env:GH_TOKEN = $env:GH_TOKEN; if \\($env:GH_TOKEN\\) { $h = @{Authorization=\"token $\\($env:GH_TOKEN\\)\"}; Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases\" -Headers $h | Select-Object tag_name, draft, prerelease } else { Write-Host \"No GH_TOKEN in this session - checking public API\"; Invoke-RestMethod \"https://api.github.com/repos/AlexisPrograming/AX/releases\" | Select-Object tag_name, draft, prerelease })"
     ]
   },
   "enableAllProjectMcpServers": true,
