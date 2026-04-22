@@ -10,6 +10,11 @@
 // WHAT IS SKIPPED:
 //   • Short command confirmations ("Opening Chrome.", "Pausing music.", "Done.")
 //
+// CONNECTIONS (graph view):
+//   • Each exchange gets topic links → [[AXIOM/Topics/topicname]]
+//   • Topic index files link back   → [[AXIOM/Conversations/YYYY-MM-DD]]
+//   • Related past dates added as   → See also: [[AXIOM/Conversations/YYYY-MM-DD]]
+//
 // Setup: add ONE line to your .env file:
 //   OBSIDIAN_VAULT_PATH=C:\Users\alexi\Documents\MyVault
 //
@@ -19,6 +24,7 @@
 //     Memory/facts.md               — everything you told AXIOM to remember
 //     Memory/highlights.md          — long / especially rich conversations
 //     Notes/YYYY-MM-DD.md           — voice notes
+//     Topics/{topic}.md             — index of all conversations per topic
 
 'use strict';
 
@@ -26,7 +32,7 @@ const fs   = require('fs');
 const path = require('path');
 
 // ── Thresholds ────────────────────────────────────────────────
-const MIN_WORDS_TO_LOG       = 35;   // skip short command confirmations
+const MIN_WORDS_TO_LOG        = 35;   // skip short command confirmations
 const MIN_WORDS_FOR_HIGHLIGHT = 120;  // very long → also goes to highlights
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -74,10 +80,144 @@ function wordCount(text) {
   return stripActionJson(text).split(/\s+/).filter(Boolean).length;
 }
 
+// ── Topic extraction ──────────────────────────────────────────
+// Pulls meaningful keywords from an exchange so Obsidian can graph-connect
+// related conversations through topic index files.
+
+const TOPIC_STOPWORDS = new Set([
+  'what','when','where','that','this','with','from','have','about','were',
+  'talk','talked','last','week','time','remember','back','tell','said',
+  'your','our','the','and','for','are','was','but','not','any','all',
+  'can','just','some','did','you','tell','asked','asking','axiom','alexi',
+  'also','then','more','like','will','been','they','them','there','would',
+  'going','want','need','make','think','know','actually','really','okay',
+  'could','should','something','everything','nothing','working','getting',
+  'open','close','start','stop','play','pause','next','done','yeah','right',
+  'good','great','nice','cool','sure','well','here','over','down','into',
+  'before','after','while','through','their','because','though','might',
+  'gonna','wanna','kinda','sorta','gotta','alexis','thing','things','looks',
+  'feel','feels','felt','looked','seems','using','used','uses','much','many',
+  'most','these','those','other','another','every','each','even','still',
+  'already','again','yet','always','never','sometimes','often','usually',
+  'probably','maybe','perhaps','that\'s','it\'s','i\'m','don\'t','didn\'t',
+  'isn\'t','aren\'t','wasn\'t','weren\'t','haven\'t','hasn\'t','hadn\'t',
+  'won\'t','wouldn\'t','can\'t','couldn\'t','shouldn\'t','okay','alright',
+]);
+
+// Known project / app / tech keywords — relevant even if they appear only once
+const KNOWN_TOPICS = new Set([
+  'pulse','axiom','obsidian','blender','supabase','vercel','github',
+  'typescript','nextjs','tailwind','python','javascript','react','cursor',
+  'claude','openai','spotify','youtube','notion','figma','unity','godot',
+  'electron','sqlite','postgres','redis','docker','windows','android','ios',
+  'claude','anthropic','elevenlabs','picovoice','porcupine','whisper',
+]);
+
+function extractTopics(userMsg, assistantMsg) {
+  const combined = ((userMsg || '') + ' ' + stripActionJson(assistantMsg || '')).toLowerCase();
+  const words = combined
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 4 && !TOPIC_STOPWORDS.has(w));
+
+  // Count frequency
+  const freq = {};
+  for (const w of words) freq[w] = (freq[w] || 0) + 1;
+
+  // Keep: known topics (1+ occurrence) OR high-freq words (2+ occurrences, length ≥ 5)
+  const selected = Object.entries(freq)
+    .filter(([w, c]) => KNOWN_TOPICS.has(w) || (c >= 2 && w.length >= 5))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([w]) => w);
+
+  return selected;
+}
+
+function topicSlug(word) {
+  return word.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// ── Topic index files ─────────────────────────────────────────
+// AXIOM/Topics/{slug}.md — hub that links to every conversation date
+// where this topic appeared. Creates the spoke connections in graph view.
+
+function updateTopicIndex(topic, dateStr) {
+  try {
+    const slug  = topicSlug(topic);
+    const dir   = path.join(axiomDir(), 'Topics');
+    ensure(dir);
+    const file  = path.join(dir, `${slug}.md`);
+    const label = topic.charAt(0).toUpperCase() + topic.slice(1);
+    const link  = `[[AXIOM/Conversations/${dateStr}]]`;
+
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(file, [
+        '---',
+        `tags: [axiom, topic, ${slug}]`,
+        '---',
+        '',
+        `# ${label}`,
+        `_All AXIOM conversations mentioning **${label}**_`,
+        '',
+      ].join('\n'), 'utf8');
+    }
+
+    // Only append if this date link isn't already there
+    const content = fs.readFileSync(file, 'utf8');
+    if (!content.includes(link)) {
+      fs.appendFileSync(file, `- ${link}\n`, 'utf8');
+    }
+  } catch (err) {
+    console.error('[AXIOM obsidian] updateTopicIndex failed:', err.message);
+  }
+}
+
+// ── Related conversation finder ───────────────────────────────
+// Scans the last 90 days of conversation files for keyword overlap.
+// Returns the top matching dates (excluding today's file).
+
+function findRelatedDates(keywords, excludeDate, limit = 3) {
+  if (!keywords.length) return [];
+  try {
+    const convDir = path.join(axiomDir(), 'Conversations');
+    if (!fs.existsSync(convDir)) return [];
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+    const files = fs.readdirSync(convDir)
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .filter(f => f.replace('.md', '') >= cutoffStr);
+
+    const scores = [];
+    for (const file of files) {
+      const dateStr = file.replace('.md', '');
+      if (dateStr === excludeDate) continue;
+
+      const content = fs.readFileSync(path.join(convDir, file), 'utf8').toLowerCase();
+      const score   = keywords.filter(kw => content.includes(kw)).length;
+      if (score > 0) scores.push({ dateStr, score });
+    }
+
+    return scores
+      .sort((a, b) => b.score - a.score || b.dateStr.localeCompare(a.dateStr))
+      .slice(0, limit)
+      .map(s => s.dateStr);
+  } catch (err) {
+    console.error('[AXIOM obsidian] findRelatedDates failed:', err.message);
+    return [];
+  }
+}
+
 // ── Conversation log ──────────────────────────────────────────
 // Writes to:  AXIOM/Conversations/YYYY-MM-DD.md
 // Skips:      exchanges where AXIOM said < MIN_WORDS_TO_LOG words
 // Highlights: exchanges > MIN_WORDS_FOR_HIGHLIGHT words also go to highlights.md
+// Links:      adds [[topic]] and [[related date]] wiki-links for graph view
 
 function logExchange(userMsg, assistantMsg, ts = Date.now()) {
   if (!isEnabled()) return;
@@ -92,16 +232,24 @@ function logExchange(userMsg, assistantMsg, ts = Date.now()) {
     const today = todayStr();
     const time  = timeStr(ts);
 
+    // ── Extract topics & build connections ────────────────────
+    const topics  = extractTopics(userMsg, assistantMsg);
+    for (const topic of topics) updateTopicIndex(topic, today);
+    const related = findRelatedDates(topics, today);
+
     // ── Daily conversation file ───────────────────────────────
     const convDir  = path.join(axiomDir(), 'Conversations');
     ensure(convDir);
     const convFile = path.join(convDir, `${today}.md`);
 
     if (!fs.existsSync(convFile)) {
+      const topicTagStr = topics.length
+        ? ', ' + topics.map(topicSlug).join(', ')
+        : '';
       fs.writeFileSync(convFile, [
         '---',
         `date: ${today}`,
-        'tags: [axiom, conversation]',
+        `tags: [axiom, conversation${topicTagStr}]`,
         '---',
         '',
         `# AXIOM Conversations — ${today}`,
@@ -110,6 +258,15 @@ function logExchange(userMsg, assistantMsg, ts = Date.now()) {
     }
 
     const userLine = (userMsg || '').replace(/\n+/g, ' ').trim();
+
+    // Wiki-link lines (only included when there's something to link)
+    const topicLinks = topics.length
+      ? `> 🔗 ${topics.map(t => `[[AXIOM/Topics/${topicSlug(t)}]]`).join(' · ')}`
+      : '';
+    const relatedLinks = related.length
+      ? `> 📌 See also: ${related.map(d => `[[AXIOM/Conversations/${d}]]`).join(' · ')}`
+      : '';
+
     const block = [
       `### ${time}`,
       '',
@@ -117,6 +274,9 @@ function logExchange(userMsg, assistantMsg, ts = Date.now()) {
       '',
       `**AXIOM:** ${cleanResponse.replace(/\n+/g, ' ')}`,
       '',
+      ...(topicLinks   ? [topicLinks]   : []),
+      ...(relatedLinks ? [relatedLinks] : []),
+      ...(topicLinks || relatedLinks ? [''] : []),
       '---',
       '',
     ].join('\n');
@@ -125,7 +285,7 @@ function logExchange(userMsg, assistantMsg, ts = Date.now()) {
 
     // ── Highlights file (long conversations only) ─────────────
     if (words >= MIN_WORDS_FOR_HIGHLIGHT) {
-      appendHighlight(today, time, userLine, cleanResponse);
+      appendHighlight(today, time, userLine, cleanResponse, topics, related);
     }
   } catch (err) {
     console.error('[AXIOM obsidian] logExchange failed:', err.message);
@@ -133,7 +293,7 @@ function logExchange(userMsg, assistantMsg, ts = Date.now()) {
 }
 
 // Appends a summary block to AXIOM/Memory/highlights.md
-function appendHighlight(date, time, userLine, cleanResponse) {
+function appendHighlight(date, time, userLine, cleanResponse, topics = [], related = []) {
   try {
     const memDir = path.join(axiomDir(), 'Memory');
     ensure(memDir);
@@ -151,6 +311,13 @@ function appendHighlight(date, time, userLine, cleanResponse) {
       ].join('\n'), 'utf8');
     }
 
+    const topicLinks   = topics.length
+      ? `> 🔗 ${topics.map(t => `[[AXIOM/Topics/${topicSlug(t)}]]`).join(' · ')}`
+      : '';
+    const relatedLinks = related.length
+      ? `> 📌 See also: ${related.map(d => `[[AXIOM/Conversations/${d}]]`).join(' · ')}`
+      : '';
+
     const block = [
       `## ${date} · ${time}`,
       '',
@@ -158,6 +325,9 @@ function appendHighlight(date, time, userLine, cleanResponse) {
       '',
       cleanResponse,
       '',
+      ...(topicLinks   ? [topicLinks]   : []),
+      ...(relatedLinks ? [relatedLinks] : []),
+      ...(topicLinks || relatedLinks ? [''] : []),
       '---',
       '',
     ].join('\n');
@@ -266,7 +436,6 @@ const SEARCH_STOPWORDS = new Set([
 
 function parseDateRange(query) {
   const q = query.toLowerCase();
-  const now = new Date();
   if (/yesterday/.test(q)) return 2;
   if (/last\s*week|past\s*week/.test(q)) return 10;
   if (/last\s*month|past\s*month/.test(q)) return 35;
@@ -316,7 +485,7 @@ function searchConversations(query, limit = 6) {
 
         const timeMatch  = block.match(/^###\s+(.+)/m);
         const alexisLine = block.match(/\*\*Alexis:\*\*\s*(.+)/);
-        const axiomLine  = block.match(/\*\*AXIOM:\*\*\s*([\s\S]+?)(?=\n---|\n##|$)/);
+        const axiomLine  = block.match(/\*\*AXIOM:\*\*\s*([\s\S]+?)(?=\n>|\n---|\n##|$)/);
 
         if (alexisLine && axiomLine) {
           results.push({
