@@ -7,7 +7,8 @@ const APP_MAP = {
   'vscode':         'code',
   'vs code':        'code',
   'visual studio code': 'code',
-  'claude':         'powershell -NoProfile -WindowStyle Hidden -Command "$p=\'$env:LOCALAPPDATA\\AnthropicClaude\\claude.exe\';if(Test-Path $p){Start-Process $p}else{$p2=\'$env:LOCALAPPDATA\\Programs\\claude\\claude.exe\';if(Test-Path $p2){Start-Process $p2}else{Start-Process \'claude\'}}"',
+  // Claude desktop app — search known install paths; do NOT fall back to the CLI tool
+  'claude':         'powershell -NoProfile -WindowStyle Hidden -Command "& { $p1=$env:LOCALAPPDATA+\'\\AnthropicClaude\\claude.exe\'; $p2=$env:LOCALAPPDATA+\'\\Programs\\claude\\claude.exe\'; if(Test-Path $p1){Start-Process $p1}elseif(Test-Path $p2){Start-Process $p2}else{$lnk=Get-ChildItem ($env:APPDATA+\'\\Microsoft\\Windows\\Start Menu\\Programs\') -Recurse -Filter *.lnk -EA 0|?{$_.BaseName -like \'*Claude*\' -and $_.BaseName -notlike \'*Code*\' -and $_.BaseName -notlike \'*CLI*\'}|Select -First 1;if($lnk){Start-Process $lnk.FullName}} }"',
   'chrome':         'start chrome',
   'google chrome':  'start chrome',
   'browser':        'start chrome',
@@ -192,32 +193,58 @@ async function executeAction(action) {
 
 // App name → process name(s) for taskkill
 const CLOSE_MAP = {
-  'chrome':       'chrome.exe',
-  'claude':       'Claude.exe',
-  'browser':      'chrome.exe',
-  'firefox':      'firefox.exe',
-  'edge':         'msedge.exe',
-  'spotify':      'Spotify.exe',
-  'discord':      'Discord.exe',
-  'valorant':     'VALORANT-Win64-Shipping.exe',
-  'riot':         'RiotClientServices.exe',
-  'riot client':  'RiotClientServices.exe',
-  'slack':        'slack.exe',
-  'teams':        'Teams.exe',
-  'vscode':       'Code.exe',
-  'vs code':      'Code.exe',
-  'notepad':      'notepad.exe',
-  'calculator':   'CalculatorApp.exe',
-  'calc':         'CalculatorApp.exe',
-  'terminal':     'WindowsTerminal.exe',
-  'explorer':     'explorer.exe',
-  'files':        'explorer.exe',
-  'word':         'WINWORD.EXE',
-  'excel':        'EXCEL.EXE',
-  'paint':        'mspaint.exe',
-  'task manager': 'Taskmgr.exe',
-  'powershell':   'powershell.exe',
-  'cmd':          'cmd.exe',
+  'chrome':               'chrome.exe',
+  'google chrome':        'chrome.exe',
+  'browser':              'chrome.exe',
+  'claude':               'Claude.exe',
+  'firefox':              'firefox.exe',
+  'edge':                 'msedge.exe',
+  'microsoft edge':       'msedge.exe',
+  'spotify':              'Spotify.exe',
+  'discord':              'Discord.exe',
+  'valorant':             'VALORANT-Win64-Shipping.exe',
+  'riot':                 'RiotClientServices.exe',
+  'riot client':          'RiotClientServices.exe',
+  'slack':                'slack.exe',
+  'teams':                'Teams.exe',
+  'microsoft teams':      'Teams.exe',
+  'vscode':               'Code.exe',
+  'vs code':              'Code.exe',
+  'visual studio code':   'Code.exe',
+  'code':                 'Code.exe',
+  'cursor':               'Cursor.exe',
+  'notepad':              'notepad.exe',
+  'notepad++':            'notepad++.exe',
+  'calculator':           'CalculatorApp.exe',
+  'calc':                 'CalculatorApp.exe',
+  'terminal':             'WindowsTerminal.exe',
+  'windows terminal':     'WindowsTerminal.exe',
+  'explorer':             'explorer.exe',
+  'files':                'explorer.exe',
+  'file explorer':        'explorer.exe',
+  'word':                 'WINWORD.EXE',
+  'microsoft word':       'WINWORD.EXE',
+  'excel':                'EXCEL.EXE',
+  'microsoft excel':      'EXCEL.EXE',
+  'powerpoint':           'POWERPNT.EXE',
+  'outlook':              'OUTLOOK.EXE',
+  'paint':                'mspaint.exe',
+  'obs':                  'obs64.exe',
+  'obs studio':           'obs64.exe',
+  'blender':              'blender.exe',
+  'figma':                'Figma.exe',
+  'steam':                'steam.exe',
+  'task manager':         'Taskmgr.exe',
+  'taskmgr':              'Taskmgr.exe',
+  'powershell':           'powershell.exe',
+  'cmd':                  'cmd.exe',
+  'command prompt':       'cmd.exe',
+  'zoom':                 'Zoom.exe',
+  'whatsapp':             'WhatsApp.exe',
+  'telegram':             'Telegram.exe',
+  'obsidian':             'Obsidian.exe',
+  'postman':              'Postman.exe',
+  'capcut':               'CapCut.exe',
 };
 
 // Critical system processes that must never be killed
@@ -232,20 +259,58 @@ const PROTECTED_PROCESSES = new Set([
 function closeApp(appName) {
   if (!appName) return Promise.resolve({ success: false, error: 'No app specified' });
   const key = appName.toLowerCase().trim();
-  const proc = (CLOSE_MAP[key] || `${appName}.exe`).toLowerCase();
 
-  if (PROTECTED_PROCESSES.has(proc)) {
-    return Promise.resolve({ success: false, error: `"${proc}" is a protected system process and cannot be closed.` });
+  // ── Known app → direct taskkill (fast path) ──────────────────
+  const proc = CLOSE_MAP[key];
+  if (proc) {
+    if (PROTECTED_PROCESSES.has(proc.toLowerCase())) {
+      return Promise.resolve({ success: false, error: `"${proc}" is a protected system process.` });
+    }
+    return run(`taskkill /IM "${proc}" /F`).then(result => {
+      if (!result.success) {
+        const msg = (result.error || '').toLowerCase();
+        if (msg.includes('not found') || msg.includes('no se encontró') || msg.includes('no running instance')) {
+          // Taskkill failed — fall through to dynamic search before giving up
+          return dynamicClose(appName);
+        }
+      }
+      return result;
+    });
   }
 
-  return run(`taskkill /IM "${proc}" /F`).then(result => {
-    if (!result.success) {
-      const msg = (result.error || '').toLowerCase();
-      if (msg.includes('not found') || msg.includes('no se encontró') || msg.includes('no running instance')) {
-        return { success: false, error: `${appName} doesn't seem to be open right now.` };
+  // ── Unknown app → search by window title or process name ─────
+  return dynamicClose(appName);
+}
+
+// Finds a running window whose title or process name matches appName,
+// then kills it. Returns { success, error }.
+function dynamicClose(appName) {
+  const safe = appName.replace(/['";\n\r`|&<>\\]/g, '').slice(0, 80);
+
+  const ps = [
+    `$n = '${safe}'`,
+    // Match process name OR window title (case-insensitive via -like)
+    `$procs = Get-Process | Where-Object {`,
+    `  ($_.ProcessName -like ('*'+$n+'*') -or $_.MainWindowTitle -like ('*'+$n+'*'))`,
+    `  -and $_.ProcessName -notmatch '^(explorer|svchost|lsass|csrss|winlogon|wininit|services|smss|dwm|audiodg|taskhostw)$'`,
+    `} | Select-Object -First 8`,
+    `if ($procs) { $procs | Stop-Process -Force } else { exit 1 }`,
+  ].join('; ');
+
+  return new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -WindowStyle Hidden -Command "& { ${ps} }"`,
+      { windowsHide: true },
+      (err) => {
+        if (err && err.code === 1) {
+          resolve({ success: false, error: `${appName} doesn't seem to be open right now.` });
+        } else if (err) {
+          resolve({ success: false, error: `Couldn't close ${appName}.` });
+        } else {
+          resolve({ success: true });
+        }
       }
-    }
-    return result;
+    );
   });
 }
 
@@ -253,14 +318,28 @@ function openApp(appName) {
   if (!appName) return Promise.resolve({ success: false, error: 'No app specified' });
 
   const key = appName.toLowerCase().trim();
-  const cmd = APP_MAP[key];
 
-  if (cmd) {
-    return run(cmd);
-  }
+  // Check hardcoded overrides first (apps that need special launch logic)
+  if (APP_MAP[key]) return run(APP_MAP[key]);
 
-  // Try via Windows shell — searches PATH, Start Menu, and registered app names
-  return run(`start "" "${appName.replace(/"/g, '')}"`)
+  // Dynamic search:
+  //  1. Start Menu .lnk shortcuts — covers virtually all installed Win32 apps
+  //  2. UWP / Store apps via Get-StartApps
+  //  3. Last resort: Windows shell start (searches PATH)
+  // App name is sanitised and embedded via single-quoted PS literal — safe.
+  const safe = appName.replace(/['";\n\r`|&<>\\]/g, '').slice(0, 80);
+
+  const ps = [
+    `$n='${safe}'`,
+    `$lnk=$null`,
+    `$d1=$env:APPDATA+'\\Microsoft\\Windows\\Start Menu\\Programs'`,
+    `$d2=$env:ProgramData+'\\Microsoft\\Windows\\Start Menu\\Programs'`,
+    `foreach($d in @($d1,$d2)){if(!$lnk){$lnk=Get-ChildItem $d -Recurse -Filter *.lnk -EA 0|Where-Object{$_.BaseName -like ('*'+$n+'*')}|Sort-Object{[Math]::Abs($_.BaseName.Length-$n.Length)}|Select-Object -First 1}}`,
+    `if($lnk){Start-Process $lnk.FullName}`,
+    `else{$uwp=Get-StartApps|Where-Object{$_.Name -like ('*'+$n+'*')}|Select-Object -First 1;if($uwp){Start-Process ('shell:AppsFolder\\'+$uwp.AppID)}else{Start-Process $n -EA 0}}`,
+  ].join('; ');
+
+  return run(`powershell -NoProfile -WindowStyle Hidden -Command "& { ${ps} }"`);
 }
 
 function openUrl(url) {

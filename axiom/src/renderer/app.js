@@ -659,8 +659,10 @@ async function listen() {
 
     if (cancelled) return;
     showSubtitle(reply);
-    setState('thinking');
-    await window.axiom.speakText(reply);
+    if (reply) {
+      setState('thinking');
+      await window.axiom.speakText(reply);
+    }
     if (cancelled) return;
 
     // Auto-reopen mic if AXIOM asked a question or needs more input
@@ -806,5 +808,19 @@ if (window.axiom.onGamingMode) {
   window.axiom.onGamingMode((active) => {
     orb.setLowPower(active);
     // Framerate throttled silently — no visual change, orb stays normal
+  });
+}
+
+// ── Working indicator — shown during Blender execution and other slow ops ─────
+if (window.axiom.onWorking) {
+  window.axiom.onWorking((label) => {
+    const el = document.getElementById('working-label');
+    if (!el) return;
+    if (label) {
+      el.textContent = label;
+      el.classList.add('active');
+    } else {
+      el.classList.remove('active');
+    }
   });
 }

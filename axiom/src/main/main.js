@@ -40,8 +40,10 @@ let windowPinned = false;
 let pendingWindowSuggestion = null;  // { exe, label, all } — set when AXIOM asks to close an app
 
 // Yes/no/never patterns for window-close responses
-const CLOSE_YES    = /^\s*(yes|yeah|yep|sure|do it|close it|close them|close all|ok|okay|si|sí|dale|claro|cierra|cerralos)\s*[.!]?\s*$/i;
-const CLOSE_NO     = /^\s*(no|nope|don.t|not now|keep it|leave it|cancel|never mind|no thanks|nah|déjalo|no lo cierres)\s*[.!]?\s*$/i;
+// Broad enough to catch natural speech — anchored so they only match when the
+// entire message is a close-confirmation (not mid-sentence noise).
+const CLOSE_YES = /^\s*(yes|yeah|yep|sure|ok|okay|si|sí|dale|claro|alright|sounds good|do it|just do it|yeah do it|do it please|yes please|yeah go ahead|go ahead|go for it|close it|close this|close that|close them|close all|cierra|cerralos)\s*[.!]?\s*$/i;
+const CLOSE_NO  = /^\s*(no|nope|nah|don.t|not now|keep it|leave it open|leave it|cancel|never mind|nevermind|no thanks|forget about it|forget it|just forget it|skip it|ignore it|don.t bother|déjalo|no lo cierres)\s*[.!]?\s*$/i;
 const CLOSE_NEVER  = /\b(never|don.t (ever )?suggest|stop suggesting|always keep|whitelist|protect|nunca)\b/i;
 
 
@@ -617,6 +619,129 @@ async function handleClipboardIntent(message) {
   return speech;
 }
 
+// ── Blender error → human speech ─────────────────────────────
+function blenderErrorToSpeech(raw) {
+  if (!raw) return "Something went wrong in Blender.";
+  if (/NoneType|has no attribute|'None'/i.test(raw))
+    return "Blender couldn't grab the object — nothing was active. Try selecting an object first, or rephrase the command.";
+  if (/context_error|invalid context|RuntimeError.*context/i.test(raw))
+    return "Blender context error — make sure you're in the 3D viewport with the MCP server running.";
+  if (/OperatorCallError|cannot execute|restricted/i.test(raw))
+    return "Blender blocked that operation. Try a simpler version of the command.";
+  if (/SyntaxError/i.test(raw))
+    return "There was a syntax error in the generated code. Try rephrasing what you want.";
+  if (/KeyError/i.test(raw))
+    return "Blender couldn't find a node or property — the material setup might differ in Blender 5.";
+  if (/bpy_struct.*item\.attr|item\.attr = val/i.test(raw))
+    return "Blender rejected a property value — the material node indices were wrong. Try rephrasing.";
+  // Generic — strip Python traceback noise, just give the last useful line
+  const lines = raw.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('Traceback') && !l.startsWith('File ') && !l.startsWith('line '));
+  const useful = lines[lines.length - 1] || raw;
+  return `Blender error — ${useful.slice(0, 80)}`;
+}
+
+// ── Self-update ───────────────────────────────────────────────
+// Packaged (installed) app  → electron-updater checks GitHub Releases,
+//                             downloads silently, restarts.
+// Dev (running from source) → git pull + npm install + app.relaunch().
+
+async function handleSelfUpdate() {
+  const { speak: speakDirect } = require('../services/speaker.js');
+
+  if (app.isPackaged) {
+    await handlePackagedUpdate(speakDirect);
+  } else {
+    await handleDevUpdate(speakDirect);
+  }
+}
+
+async function handlePackagedUpdate(speak) {
+  try {
+    const { autoUpdater } = require('electron-updater');
+
+    autoUpdater.autoDownload        = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.logger              = null; // silence file logs
+
+    await speak('Checking for updates...');
+
+    const result = await autoUpdater.checkForUpdates();
+    const info   = result?.updateInfo;
+
+    if (!info || info.version === app.getVersion()) {
+      await speak(`You're already on version ${app.getVersion()}. Nothing to update.`);
+      return;
+    }
+
+    await speak(`Version ${info.version} is available. Downloading now — I'll restart when it's ready.`);
+
+    await new Promise((resolve, reject) => {
+      autoUpdater.once('update-downloaded', resolve);
+      autoUpdater.once('error', reject);
+      autoUpdater.downloadUpdate();
+    });
+
+    await speak('Download complete. Installing and restarting now.');
+    await new Promise(r => setTimeout(r, 1800));
+    autoUpdater.quitAndInstall(true /* silent */, true /* restart */);
+
+  } catch (err) {
+    const msg = err?.message || String(err);
+    if (/Cannot find module/.test(msg)) {
+      const { speak: s } = require('../services/speaker.js');
+      await s('electron-updater is not installed yet. Run npm install in the axiom folder first.').catch(() => {});
+    } else {
+      await speak(`Update failed — ${msg.slice(0, 80)}`).catch(() => {});
+    }
+  }
+}
+
+async function handleDevUpdate(speak) {
+  const APP_DIR = path.join(__dirname, '..', '..');
+
+  const git = (args) => new Promise((resolve, reject) => {
+    exec(`git ${args}`, { cwd: APP_DIR, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) reject(new Error((stderr || err.message || '').trim().slice(0, 120)));
+      else resolve((stdout || '').trim());
+    });
+  });
+
+  try {
+    await git('fetch');
+
+    const behind = await git('rev-list HEAD..origin/HEAD --count').catch(() => '0');
+
+    if (!behind || behind === '0') {
+      await speak("You're already on the latest version. Nothing to update.");
+      return;
+    }
+
+    const changed    = await git('diff --name-only HEAD..origin/HEAD').catch(() => '');
+    const needsInstall = changed.includes('package.json');
+    const count      = parseInt(behind, 10);
+
+    await speak(`Found ${count} new update${count !== 1 ? 's' : ''}. Pulling now.`);
+    await git('pull');
+
+    if (needsInstall) {
+      await speak('New packages detected — installing dependencies. Give me a minute.');
+      await new Promise((resolve, reject) => {
+        exec('npm install', { cwd: APP_DIR, windowsHide: true }, (err) => {
+          if (err) reject(err); else resolve();
+        });
+      });
+    }
+
+    await speak('Update complete. Restarting now.');
+    await new Promise(r => setTimeout(r, 1800));
+    app.relaunch();
+    app.exit(0);
+
+  } catch (err) {
+    await speak(`Update failed — ${err.message.slice(0, 80)}`).catch(() => {});
+  }
+}
+
 // ── IPC handlers ─────────────────────────────────────────────
 
 ipcMain.handle('send-to-claude', async (_event, message) => {
@@ -677,8 +802,11 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       return { speech: reply, needsReply: false };
     }
 
-    // User said something else — clear the pending suggestion and fall through
+    // User said something else — inject suggestion context so Claude understands
+    // what the user is responding to, then fall through to normal Claude handling.
+    const _sugg = pendingWindowSuggestion;
     pendingWindowSuggestion = null;
+    message = `[AXIOM just asked: "${_sugg.speech}" — user replied:] ${message}`;
   }
 
   // ── Clipboard intent check ────────────────────────────────
@@ -782,24 +910,49 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
       }
       const code = result.action.code || '';
       if (!code.trim()) {
-        const msg = "I didn't generate any code for that Blender command. Try rephrasing.";
+        const msg = "Hmm, I couldn't figure out the right command for that. Try rephrasing.";
         lastAxiomResponse = msg;
         return { speech: msg, needsReply: false };
       }
+      // Show working indicator in renderer UI
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('axiom-working', 'Working in Blender...');
+      }
+      // Speak a short natural phrase — NEVER read code or Claude's verbose text
+      const workPhrases = [
+        "Give me a second.",
+        "On it.",
+        "Working on it.",
+        "Hold on a second.",
+        "Give me a moment.",
+      ];
+      await speak(workPhrases[Math.floor(Math.random() * workPhrases.length)]);
       try {
-        // Speak intent first so Alexis knows what's happening while Blender works
-        await speak(result.speech || result.action.task || 'On it — working in Blender.');
         const blResult = await blender.executeCode(code);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('axiom-working', null);
+        }
         if (blResult && blResult.status === 'error') {
-          const errMsg = `Blender hit an error — ${(blResult.error || 'unknown error').slice(0, 120)}`;
+          // blResult.error may be undefined — fall back to blResult.message
+          const raw = blResult.error || blResult.message || '';
+          const errMsg = blenderErrorToSpeech(raw);
           lastAxiomResponse = errMsg;
           return { speech: errMsg, needsReply: false };
         }
-        // Success — speech already spoken above
-        lastAxiomResponse = result.speech || result.action.task || 'Done.';
-        return { speech: null, needsReply: false };
+        // Bring Blender to foreground so Alexis sees the result
+        blender.focusWindow();
+        // Speak the task description as the completion phrase
+        const doneMsg = (result.action.task || 'Done.').slice(0, 80);
+        lastAxiomResponse = doneMsg;
+        return { speech: doneMsg, needsReply: false };
       } catch (err) {
-        const msg = `Lost contact with Blender — ${err.message.slice(0, 80)}. Is the server still running?`;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('axiom-working', null);
+        }
+        const isTimeout = /timed out/i.test(err?.message || '');
+        const msg = isTimeout
+          ? "Blender took too long — the script might be too complex. Try breaking it into smaller steps."
+          : "Lost contact with Blender — is the server still running?";
         lastAxiomResponse = msg;
         return { speech: msg, needsReply: false };
       }
@@ -818,6 +971,14 @@ ipcMain.handle('send-to-claude', async (_event, message) => {
         console.error('[AXIOM search]', err.message);
         return { speech: "Hmm, I ran into an issue with the search. Check your Serper API key in .env.", needsReply: false };
       }
+    }
+
+    // Self-update: git pull + npm install + relaunch
+    if (result.action.type === 'update_self') {
+      setTimeout(() => handleSelfUpdate().catch(console.error), 600);
+      const reply = 'Checking for updates, one second.';
+      lastAxiomResponse = reply;
+      return { speech: reply, needsReply: false };
     }
 
     // Pin / unpin window via voice command

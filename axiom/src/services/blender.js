@@ -8,7 +8,7 @@ const net = require('net');
 
 const HOST       = '127.0.0.1';
 const PORT       = 9876;
-const TIMEOUT_MS = 15000; // 15 s — heavy ops (subdivide, boolean) can be slow
+const TIMEOUT_MS = 25000; // 25 s — headroom for material/lighting operations
 const CHECK_MS   = 2000;  // quick probe timeout
 
 // ── Low-level send/receive ────────────────────────────────────
@@ -123,4 +123,27 @@ async function describeScene() {
   }
 }
 
-module.exports = { isRunning, executeCode, getSceneInfo, getObjectInfo, describeScene };
+// ── Bring Blender window to foreground ────────────────────────
+// Call after executeCode so Alexis can see the result immediately.
+function focusWindow() {
+  const { exec } = require('child_process');
+  const ps = `
+$p = Get-Process blender* -ErrorAction SilentlyContinue |
+     Where-Object { $_.MainWindowHandle -ne 0 } |
+     Select-Object -First 1
+if ($p) {
+  Add-Type @"
+  using System; using System.Runtime.InteropServices;
+  public class BW {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
+  }
+"@ -ErrorAction SilentlyContinue
+  [BW]::ShowWindow($p.MainWindowHandle, 9)
+  [BW]::SetForegroundWindow($p.MainWindowHandle)
+}`.trim();
+  exec(`powershell -NoProfile -WindowStyle Hidden -Command "${ps.replace(/"/g, '\\"')}"`,
+    { windowsHide: true }, () => {});
+}
+
+module.exports = { isRunning, executeCode, getSceneInfo, getObjectInfo, describeScene, focusWindow };

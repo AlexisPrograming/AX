@@ -53,7 +53,22 @@
       "Bash(powershell.exe -NoProfile -Command \"\\(Get-Content 'D:\\\\AX\\\\axiom\\\\.env'\\) -replace '3062b6765dOBSIDIAN', '3062b6765d`nOBSIDIAN' | Set-Content 'D:\\\\AX\\\\axiom\\\\.env'\")",
       "Bash(powershell.exe -NoProfile -Command ':*)",
       "Bash(uvx --version)",
-      "Bash(where blender *)"
+      "Bash(where blender *)",
+      "Bash(where blender.exe)",
+      "Bash(dir \"C:\\\\Program Files\\\\Blender Foundation\")",
+      "Bash(dir \"%APPDATA%\\\\Blender Foundation\")",
+      "Bash(node scripts/test-blender.js)",
+      "Bash(node \"D:/AX/axiom/scripts/test-blender.js\")",
+      "Bash(findstr /i \"build\\\\|start\\\\|dev\\\\|main\\\\|electron\")",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const net=require\\('net'\\);const c=new net.Socket\\(\\);c.setTimeout\\(2000\\);c.connect\\(9876,'127.0.0.1',\\(\\)=>{console.log\\('BLENDER UP'\\);c.destroy\\(\\);}\\);c.on\\('error',\\(\\)=>console.log\\('BLENDER DOWN'\\)\\);c.on\\('timeout',\\(\\)=>{console.log\\('TIMEOUT'\\);c.destroy\\(\\);}\\);\")",
+      "Bash(node \"D:\\\\AX\\\\axiom\\\\scripts\\\\test-blender.js\")",
+      "Bash(taskkill /f /im electron.exe)",
+      "Bash(taskkill /f /im axiom.exe)",
+      "Read(//d D:/AX/**)",
+      "PowerShell(Stop-Process -Force)",
+      "PowerShell(Get-ChildItem \"$env:LOCALAPPDATA\", \"$env:APPDATA\", \"C:\\\\Program Files\", \"C:\\\\Program Files \\(x86\\)\" -Recurse -Filter \"Claude.exe\" -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-List)",
+      "PowerShell(Set-Location \"D:\\\\AX\\\\axiom\"; git fetch 2>&1; $behind = git rev-list HEAD..origin/HEAD --count 2>&1; Write-Host \"Commits behind: $behind\"; $changed = git diff --name-only HEAD..origin/HEAD 2>&1; Write-Host \"Changed files: $changed\")"
     ]
   },
   "enableAllProjectMcpServers": true,
